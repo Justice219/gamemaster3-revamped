@@ -6,46 +6,83 @@ lyx = lyx
 --! Updated to use proper LYX chat command system with enhanced security
 --]]
 
+-- Register the network string immediately to ensure it's available
+if SERVER then
+    util.AddNetworkString("gm3:menu:open")
+end
+
 do
     --[[
         Register the main GM3 menu command using LYX's secure command system
         Includes permission checking and proper error handling
-        Delayed to ensure GM3 systems are initialized
+        Delayed to ensure GM3 systems AND network strings are initialized
     ]]
-    timer.Simple(0.5, function()
-        local success = lyx:ChatAddCommand("gm3", {
-            prefix = "!",
-            func = function(ply, args)
-                -- Validate player
-                if not IsValid(ply) then
-                    return
-                end
+    timer.Simple(0.5, function()  -- Small delay to ensure GM3 systems are initialized
+        gm3.Logger:Log("Attempting to register !gm3 command...")
 
-                -- Security check to ensure player has permission
-                local hasAccess = gm3:SecurityCheck(ply)
-                if not hasAccess then
-                    ply:ChatPrint("You don't have permission to access GM3.")
-                    lyx.Logger:Log("Player " .. ply:Nick() .. " denied GM3 access - no permission")
-                    return
-                end
+        local success, err = pcall(function()
+            return lyx:ChatAddCommand("gm3", {
+                prefix = "!",
+                func = function(ply, args)
+                    gm3.Logger:Log("!gm3 command invoked by: " .. (IsValid(ply) and ply:Nick() or "invalid player"))
 
-                -- Open the GM3 menu for the player
-                net.Start("gm3:menu:open")
-                net.Send(ply)
+                    -- Validate player
+                    if not IsValid(ply) then
+                        gm3.Logger:Log("ERROR: Invalid player in !gm3 command", 3)
+                        return
+                    end
 
-                lyx.Logger:Log("Player " .. ply:Nick() .. " opened GM3 menu")
-            end,
-            description = "Open the Gamemaster 3 admin menu",
-            usage = "!gm3",
-            -- Remove the permission function that might be causing issues
-            -- Let the internal security check handle it
-            cooldown = 1
-        })
+                    gm3.Logger:Log("Player usergroup: " .. ply:GetUserGroup())
+                    gm3.Logger:Log("Checking security for player: " .. ply:Nick())
+
+                    -- Security check to ensure player has permission
+                    local secSuccess, secErr = pcall(function()
+                        return gm3:SecurityCheck(ply)
+                    end)
+
+                    if not secSuccess then
+                        gm3.Logger:Log("ERROR in SecurityCheck: " .. tostring(secErr), 3)
+                        ply:ChatPrint("Error checking permissions. Please contact an administrator.")
+                        return
+                    end
+
+                    local hasAccess = secErr -- secErr contains the return value when pcall succeeds
+                    gm3.Logger:Log("Security check result: " .. tostring(hasAccess))
+
+                    if not hasAccess then
+                        ply:ChatPrint("You don't have permission to access GM3.")
+                        gm3.Logger:Log("Player " .. ply:Nick() .. " denied GM3 access - no permission")
+                        return
+                    end
+
+                    gm3.Logger:Log("Opening GM3 menu for " .. ply:Nick())
+
+                    -- Open the GM3 menu for the player with error handling
+                    local netSuccess, netErr = pcall(function()
+                        net.Start("gm3:menu:open")
+                        net.Send(ply)
+                    end)
+
+                    if not netSuccess then
+                        gm3.Logger:Log("ERROR sending menu open net message: " .. tostring(netErr), 3)
+                        ply:ChatPrint("Failed to open GM3 menu. Please try again.")
+                        return
+                    end
+
+                    gm3.Logger:Log("Successfully sent menu open message to " .. ply:Nick())
+                end,
+                description = "Open the Gamemaster 3 admin menu",
+                usage = "!gm3",
+                -- Remove the permission function that might be causing issues
+                -- Let the internal security check handle it
+                cooldown = 1
+            })
+        end)
 
         if success then
-            gm3.Logger:Log("GM3 command registered successfully")
+            gm3.Logger:Log("GM3 command registered successfully: " .. tostring(err))
         else
-            gm3.Logger:Log("Failed to register GM3 command", 3)
+            gm3.Logger:Log("Failed to register GM3 command: " .. tostring(err), 3)
         end
     end)
 end
