@@ -1,10 +1,9 @@
 gm3 = gm3
 lyx = lyx
 
--- Register network string on both client and server
-lyx:NetAdd("gm3:tools:blackscreen", {})
-
 if SERVER then
+    -- Register network string on server
+    lyx:NetAdd("gm3:tools:blackscreen", {})
     gm3 = gm3
     lyx = lyx
 
