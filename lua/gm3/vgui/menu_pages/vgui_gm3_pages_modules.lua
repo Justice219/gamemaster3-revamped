@@ -136,8 +136,7 @@ function PANEL:CreateHeader()
     self.SearchEntry:Dock(FILL)
     self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
     self.SearchEntry:SetPlaceholderText("Search modules...")
-    self.SearchEntry:SetBackgroundColor(lyx.Colors.Background)
-    -- lyx.TextEntry2 doesn't have SetFont, it uses its own styling
+    -- lyx.TextEntry2 doesn't have SetFont or SetBackgroundColor, it uses its own styling
     self.SearchEntry.OnChange = function(s)
         self.SearchText = s:GetValue()
         self:FilterModules()
@@ -263,21 +262,31 @@ function PANEL:RefreshModules()
     local total = table.Count(self.Modules)
     self.CountLabel:SetText(string.format("Showing %d of %d modules", count, total))
 
-    -- Create module panels
-    local y = 0
-    for name, module in pairs(self.FilteredModules) do
-        local modPanel = self:CreateModulePanel(module, self.ModuleContainer)
-        modPanel:SetPos(0, y)
-        y = y + modPanel:GetTall() + lyx.Scale(10)
-    end
+    -- Delay module creation slightly to ensure container is properly sized
+    timer.Simple(0.01, function()
+        if not IsValid(self) or not IsValid(self.ModuleContainer) then return end
 
-    -- Adjust container height
-    self.ModuleContainer:SetTall(y)
+        -- Create module panels
+        local y = 0
+        for name, module in pairs(self.FilteredModules) do
+            local modPanel = self:CreateModulePanel(module, self.ModuleContainer)
+            modPanel:SetPos(0, y)
+            y = y + modPanel:GetTall() + lyx.Scale(10)
+        end
+
+        -- Adjust container height
+        self.ModuleContainer:SetTall(y)
+    end)
 end
 
 function PANEL:CreateModulePanel(module, parent)
     local panel = vgui.Create("DPanel", parent)
-    panel:SetSize(parent:GetWide() - lyx.Scale(10), lyx.Scale(200))
+    -- Use scroll panel width if parent width is 0
+    local panelWidth = parent:GetWide()
+    if panelWidth <= 0 then
+        panelWidth = self.ScrollPanel:GetWide() - lyx.ScaleW(20)
+    end
+    panel:SetSize(panelWidth - lyx.Scale(10), lyx.Scale(200))
 
     -- Count arguments to determine panel height
     local argCount = module.data.args and table.Count(module.data.args) or 0
@@ -340,8 +349,6 @@ function PANEL:CreateModulePanel(module, parent)
                 entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
                 entry:SetPlaceholderText(v.name or v.def or "Text")
                 entry:SetValue(v.def or "")
-                -- Set background to darker color for contrast
-                entry:SetBackgroundColor(lyx.Colors.Background)
                 args[k] = v.def or ""
 
                 entry.OnChange = function(s)
@@ -357,8 +364,6 @@ function PANEL:CreateModulePanel(module, parent)
                 entry:SetPlaceholderText(v.name or tostring(v.def) or "Number")
                 entry:SetValue(tostring(v.def or 0))
                 entry:SetNumeric(true)
-                -- Set background to darker color for contrast
-                entry:SetBackgroundColor(lyx.Colors.Background)
                 args[k] = tonumber(v.def) or 0
 
                 entry.OnChange = function(s)
