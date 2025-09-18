@@ -2,12 +2,12 @@ gm3 = gm3
 lyx = lyx
 
 if SERVER then
-    -- Register network strings for territory control
-    lyx:NetAdd("gm3:tools:territory:update", {})
-    lyx:NetAdd("gm3:tools:territory:capture", {})
-    lyx:NetAdd("gm3:tools:territory:contested", {})
-    lyx:NetAdd("gm3:tools:territory:reset", {})
-    lyx:NetAdd("gm3:tools:territory:points", {})
+    -- Register network strings for territory control (server -> client only)
+    lyx:NetAdd("gm3:tools:territory:update")
+    lyx:NetAdd("gm3:tools:territory:capture")
+    lyx:NetAdd("gm3:tools:territory:contested")
+    lyx:NetAdd("gm3:tools:territory:reset")
+    lyx:NetAdd("gm3:tools:territory:points")
 
     gm3 = gm3
     lyx = lyx

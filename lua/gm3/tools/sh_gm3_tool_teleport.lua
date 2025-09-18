@@ -2,8 +2,8 @@ gm3 = gm3
 lyx = lyx
 
 if SERVER then
-    -- Register network string on server
-    lyx:NetAdd("gm3:tools:teleport", {})
+    -- Register network string on server (server -> client only)
+    lyx:NetAdd("gm3:tools:teleport")
 
     gm3 = gm3
     lyx = lyx

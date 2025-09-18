@@ -2,12 +2,12 @@ gm3 = gm3
 lyx = lyx
 
 if SERVER then
-    -- Register network strings for scene director
-    lyx:NetAdd("gm3:tools:scenedirector:start", {})
-    lyx:NetAdd("gm3:tools:scenedirector:camera", {})
-    lyx:NetAdd("gm3:tools:scenedirector:subtitle", {})
-    lyx:NetAdd("gm3:tools:scenedirector:end", {})
-    lyx:NetAdd("gm3:tools:scenedirector:effect", {})
+    -- Register network strings for scene director (server -> client only)
+    lyx:NetAdd("gm3:tools:scenedirector:start")
+    lyx:NetAdd("gm3:tools:scenedirector:camera")
+    lyx:NetAdd("gm3:tools:scenedirector:subtitle")
+    lyx:NetAdd("gm3:tools:scenedirector:end")
+    lyx:NetAdd("gm3:tools:scenedirector:effect")
 
     gm3 = gm3
     lyx = lyx

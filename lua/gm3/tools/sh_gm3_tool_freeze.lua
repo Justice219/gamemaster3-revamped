@@ -2,9 +2,9 @@ gm3 = gm3
 lyx = lyx
 
 if SERVER then
-    -- Register network strings on server
-    lyx:NetAdd("gm3:tools:freeze", {})
-    lyx:NetAdd("gm3:tools:freeze:status", {})
+    -- Register network strings on server (server -> client only)
+    lyx:NetAdd("gm3:tools:freeze")
+    lyx:NetAdd("gm3:tools:freeze:status")
 
     gm3 = gm3
     lyx = lyx
