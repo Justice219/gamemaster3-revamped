@@ -391,6 +391,42 @@ function PANEL:CreateModulePanel(module, parent)
                 end
 
                 argY = argY + lyx.Scale(35)
+
+            elseif v.type == "player" then
+                -- Player selector button
+                local playerBtn = vgui.Create("lyx.TextButton2", panel)
+                playerBtn:SetPos(lyx.Scale(15), argY)
+                playerBtn:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
+                playerBtn:SetText(v.name or "Select Player")
+                playerBtn:SetFont("GM3.Modules.Normal")
+                playerBtn:SetBackgroundColor(Color(80, 80, 80))
+
+                -- Store default value (SteamID)
+                args[k] = v.def or ""
+                local selectedName = "No player selected"
+
+                -- If default is provided, try to find the player
+                if v.def and v.def ~= "" then
+                    for _, ply in ipairs(player.GetAll()) do
+                        if ply:SteamID() == v.def then
+                            selectedName = ply:Nick()
+                            break
+                        end
+                    end
+                end
+
+                playerBtn:SetText(selectedName)
+
+                playerBtn.DoClick = function()
+                    local selector = vgui.Create("GM3.PlayerSelector")
+                    selector.OnPlayerSelected = function(s, ply)
+                        args[k] = ply:SteamID()
+                        playerBtn:SetText(ply:Nick())
+                        playerBtn:SetBackgroundColor(Color(50, 100, 50))
+                    end
+                end
+
+                argY = argY + lyx.Scale(35)
             end
         end
     end

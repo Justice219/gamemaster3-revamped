@@ -81,6 +81,16 @@ do
         end
         gm3.Logger:Log("Ran tool with name " .. name .. "!" .. "ply: " .. ply:SteamID())
     end
+
+    --+ Helper function to get player from SteamID
+    function gm3:GetPlayerBySteamID(steamID)
+        for _, ply in ipairs(player.GetAll()) do
+            if ply:SteamID() == steamID then
+                return ply
+            end
+        end
+        return nil
+    end
     
     --! PLEASE CHECK
     -- gm3/tools/gm3_tool_example.lua 

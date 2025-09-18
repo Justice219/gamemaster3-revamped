@@ -30,26 +30,61 @@ if SERVER then
     --+ CREATE A NEW GM3MODULE
     local tool = GM3Module.new(
         "Example", --? name
-        "This is an example tool", --? description
+        "This is an example tool demonstrating all argument types", --? description
         "GM3", --? author
         { --? arguments
-            ["age"] = {
-                type = "number",
-                def = 0
+            ["Target Player"] = {
+                type = "player",
+                def = "" -- Default empty, or could be a specific SteamID
             },
-            ["name"] = {
+            ["Message"] = {
                 type = "string",
-                def = "GM3"
+                def = "Hello World!"
+            },
+            ["Duration"] = {
+                type = "number",
+                def = 10
+            },
+            ["Enabled"] = {
+                type = "boolean",
+                def = true
             }
         },
         function(ply, args) --? func
+            -- Find the target player by SteamID
+            local targetPlayer = nil
+            if args["Target Player"] and args["Target Player"] ~= "" then
+                for _, p in ipairs(player.GetAll()) do
+                    if p:SteamID() == args["Target Player"] then
+                        targetPlayer = p
+                        break
+                    end
+                end
+            end
+
+            local targetName = targetPlayer and targetPlayer:Nick() or "No player selected"
+
             lyx:MessageServer({
                 ["type"] = "header",
                 ["color1"] = Color(0,255,213),
-                ["header"] = "GM3",
+                ["header"] = "GM3 Example",
                 ["color2"] = Color(255,255,255),
-                ["text"] = "This is an example tool! Age: " .. args["age"] .. " Name: " .. args["name"]
+                ["text"] = string.format("Target: %s | Message: %s | Duration: %d | Enabled: %s",
+                    targetName, args["Message"], args["Duration"], tostring(args["Enabled"]))
             })
+
+            -- If a player is selected and enabled, do something with them
+            if targetPlayer and args["Enabled"] then
+                -- Example: Send them a notification
+                lyx:MessagePlayer({
+                    ["type"] = "header",
+                    ["color1"] = Color(0,255,213),
+                    ["header"] = "GM3",
+                    ["color2"] = Color(255,255,255),
+                    ["text"] = args["Message"],
+                    ["ply"] = targetPlayer
+                })
+            end
         end,
         "Utility" --? category - Options: Visual, Control, Communication, Environment, Utility
     )
