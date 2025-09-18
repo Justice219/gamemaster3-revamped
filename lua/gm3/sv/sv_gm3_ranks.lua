@@ -11,10 +11,10 @@ gm3.ranks = gm3.ranks or {}
 do
     function gm3:RankAdd(name)
         if gm3.ranks[name] then
-            gm3.Logger:Log("Couldnt add Rank, it already exists: " .. name)    
+            gm3.Logger:Log("Couldnt add Rank, it already exists: " .. name)
         return end
-        
-        gm3.ranks[name] = true
+
+        -- Set rank as a table with panel property
         gm3.ranks[name] = {panel = true}
         lyx:JSONSave("gm3_ranks.txt", gm3.ranks)
         gm3.Logger:Log("Added Rank: " .. name)
@@ -32,10 +32,20 @@ do
 
     function gm3:RankUpdate(name, panel)
         if not gm3.ranks[name] then
-            gm3.Logger:Log("Couldnt update Rank, it doesnt exist: " .. name)    
+            gm3.Logger:Log("Couldnt update Rank, it doesnt exist: " .. name)
         return end
-        
-        gm3.ranks[name].panel = panel
+
+        -- Handle both old format (boolean) and new format (table)
+        if type(gm3.ranks[name]) == "boolean" then
+            -- Convert from boolean to table format
+            gm3.ranks[name] = {panel = panel}
+        elseif type(gm3.ranks[name]) == "table" then
+            gm3.ranks[name].panel = panel
+        else
+            -- If it's neither, create as table
+            gm3.ranks[name] = {panel = panel}
+        end
+
         lyx:JSONSave("gm3_ranks.txt", gm3.ranks)
         gm3.Logger:Log("Updated Rank: " .. name)
     end
