@@ -2,6 +2,9 @@ gm3 = gm3 or {}
 gm3.settings = gm3.settings or {}
 lyx = lyx
 
+-- Register network string early to avoid unpooled message error
+lyx:NetAdd("gm3:setting:syncSetting", {})
+
 do
     function gm3:CheckSettingExists(label, func)
         local settings = lyx:JSONLoad("gm3_settings.txt")
