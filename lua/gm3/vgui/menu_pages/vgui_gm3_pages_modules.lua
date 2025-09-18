@@ -1,117 +1,77 @@
 local PANEL = {}
 
 --[[
-    GM3 Modules Page - Complete UI Redesign
-    Features:
-    - Real-time search with instant filtering
-    - Category-based organization
-    - Sorting options
-    - Modern card design with LYX theming
-    - Module statistics
-    - Smooth animations
+    GM3 Modules Page - Redesigned with proper LYX theming
+    Uses existing LYX components and matches the style of other panels
 ]]
 
--- Register fonts for the modules page
-surface.CreateFont("GM3.Modules.Title", {
-    font = "Open Sans Bold",
-    size = lyx.Scale(24),
-    weight = 600,
-    antialias = true
-})
+-- Icon codes for module categories (imgur IDs)
+local CATEGORY_ICONS = {
+    ["All"] = "NwmR5Gc",       -- Dashboard icon
+    ["Visual"] = "Y9BRhjr",     -- Eye/Opsat icon
+    ["Control"] = "sy2ObLg",    -- Player icon
+    ["Communication"] = "xkFWEkK", -- Commands icon
+    ["Environment"] = "mrDq6Ar", -- Server icon
+    ["Utility"] = "lOMzrJ6"     -- Modules icon (gears)
+}
 
-surface.CreateFont("GM3.Modules.Category", {
-    font = "Open Sans SemiBold",
-    size = lyx.Scale(18),
-    weight = 500,
-    antialias = true
-})
-
-surface.CreateFont("GM3.Modules.Stats", {
-    font = "Open Sans",
-    size = lyx.Scale(14),
-    weight = 400,
-    antialias = true
-})
-
-surface.CreateFont("GM3.Modules.Search", {
-    font = "Open Sans",
-    size = lyx.Scale(16),
-    weight = 400,
-    antialias = true
-})
-
--- Module categories for better organization
+-- Module categories with consistent theming
 local MODULE_CATEGORIES = {
     ["Visual"] = {
-        icon = "👁",
-        color = Color(156, 39, 176),
         modules = {"blackscreen", "blind", "drunk", "opsat", "screenshake", "confetti", "cutscene"}
     },
     ["Control"] = {
-        icon = "🎮",
-        color = Color(33, 150, 243),
         modules = {"freeze", "jetpack", "levitate", "lowgravity", "teleport", "clone"}
     },
     ["Communication"] = {
-        icon = "💬",
-        color = Color(76, 175, 80),
         modules = {"disablechat", "screenmessage", "screentimer"}
     },
     ["Environment"] = {
-        icon = "🌍",
-        color = Color(255, 152, 0),
         modules = {"disablelights", "clearlag", "weather"}
     },
     ["Utility"] = {
-        icon = "🔧",
-        color = Color(158, 158, 158),
         modules = {"playeresp", "example"}
     }
 }
 
+lyx.RegisterFont("GM3.Modules.Title", "Open Sans Bold", 22)
+lyx.RegisterFont("GM3.Modules.Category", "Open Sans SemiBold", 16)
+lyx.RegisterFont("GM3.Modules.Normal", "Open Sans", 14)
+
 function PANEL:Init()
-    -- Initialize module data
     self.Modules = {}
     self.FilteredModules = {}
     self.CurrentCategory = "All"
-    self.CurrentSort = "name"
     self.SearchText = ""
 
-    -- Process and categorize modules
+    -- Categorize modules
     self:CategorizeModules()
 
-    -- Create main container
-    self.Container = vgui.Create("DPanel", self)
-    self.Container:Dock(FILL)
-    self.Container:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-    self.Container.Paint = function(s, w, h)
-        -- Subtle background
-        local bgColor = lyx.Colors.Background or Color(30, 30, 30)
-        draw.RoundedBox(8, 0, 0, w, h, ColorAlpha(bgColor, 50))
-    end
+    -- Main scroll panel matching other panels
+    self.ScrollPanel = vgui.Create("DScrollPanel", self)
+    self.ScrollPanel:Dock(FILL)
+    self.ScrollPanel:DockMargin(lyx.ScaleW(10), lyx.Scale(10), lyx.ScaleW(10), lyx.Scale(10))
 
-    -- Create header panel
+    -- Header section
     self:CreateHeader()
 
-    -- Create category tabs
-    self:CreateCategoryTabs()
+    -- Category buttons
+    self:CreateCategoryButtons()
 
-    -- Create module grid
-    self:CreateModuleGrid()
+    -- Module list container
+    self.ModuleContainer = vgui.Create("DPanel", self.ScrollPanel)
+    self.ModuleContainer:Dock(TOP)
+    self.ModuleContainer:SetTall(lyx.Scale(2000)) -- Will adjust based on content
+    self.ModuleContainer.Paint = function() end
 
-    -- Create stats panel
-    self:CreateStatsPanel()
-
-    -- Initial population
-    self:PopulateModules()
+    -- Populate modules
+    self:RefreshModules()
 end
 
 function PANEL:CategorizeModules()
-    -- Categorize all modules
     for name, module in pairs(gm3.tools) do
-        local category = "Utility" -- Default category
+        local category = "Utility"
 
-        -- Find appropriate category based on module name
         for catName, catData in pairs(MODULE_CATEGORIES) do
             for _, moduleName in ipairs(catData.modules) do
                 if string.find(string.lower(name), string.lower(moduleName)) then
@@ -121,7 +81,6 @@ function PANEL:CategorizeModules()
             end
         end
 
-        -- Store module with category
         self.Modules[name] = {
             data = module,
             category = category,
@@ -133,204 +92,93 @@ function PANEL:CategorizeModules()
 end
 
 function PANEL:CreateHeader()
-    -- Header with search and controls
-    self.Header = vgui.Create("DPanel", self.Container)
-    self.Header:Dock(TOP)
-    self.Header:SetTall(lyx.Scale(60))
-    self.Header:DockMargin(0, 0, 0, lyx.Scale(10))
-    self.Header.Paint = function(s, w, h)
-        -- Header background with gradient
-        local headerColor = lyx.Colors.Header or Color(45, 45, 45)
-        draw.RoundedBox(8, 0, 0, w, h, headerColor)
-
-        -- Bottom accent line
-        local accentColor = lyx.Colors.Accent or Color(0, 150, 255)
-        surface.SetDrawColor(accentColor)
-        surface.DrawRect(0, h - 2, w, 2)
+    -- Search container
+    local searchContainer = vgui.Create("DPanel", self.ScrollPanel)
+    searchContainer:Dock(TOP)
+    searchContainer:SetTall(lyx.Scale(50))
+    searchContainer:DockMargin(0, 0, 0, lyx.Scale(10))
+    searchContainer.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(68, 68, 68, 100))
     end
 
-    -- Search bar with icon
-    self.SearchContainer = vgui.Create("DPanel", self.Header)
-    self.SearchContainer:Dock(LEFT)
-    self.SearchContainer:SetWide(lyx.ScaleW(400))
-    self.SearchContainer:DockMargin(lyx.Scale(15), lyx.Scale(10), lyx.Scale(15), lyx.Scale(10))
-    self.SearchContainer.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(255, 255, 255, 10))
-
-        -- Search icon
-        draw.SimpleText("🔍", "GM3.Modules.Search", lyx.Scale(10), h/2, Color(255, 255, 255, 100), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    end
-
-    self.SearchBar = vgui.Create("DTextEntry", self.SearchContainer)
-    self.SearchBar:Dock(FILL)
-    self.SearchBar:DockMargin(lyx.Scale(35), lyx.Scale(5), lyx.Scale(10), lyx.Scale(5))
-    self.SearchBar:SetFont("GM3.Modules.Search")
-    self.SearchBar:SetTextColor(Color(255, 255, 255))
-    self.SearchBar:SetCursorColor(lyx.Colors.Accent or Color(0, 150, 255))
-    self.SearchBar:SetPlaceholderText("Search modules...")
-    self.SearchBar:SetDrawBackground(false)
-    self.SearchBar.OnChange = function(s)
+    -- Search entry using LYX TextEntry2
+    self.SearchEntry = vgui.Create("lyx.TextEntry2", searchContainer)
+    self.SearchEntry:Dock(FILL)
+    self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
+    self.SearchEntry:SetPlaceholderText("Search modules...")
+    self.SearchEntry:SetFont("GM3.Modules.Normal")
+    self.SearchEntry.OnChange = function(s)
         self.SearchText = s:GetValue()
         self:FilterModules()
     end
 
-    -- Sort dropdown
-    self.SortContainer = vgui.Create("DPanel", self.Header)
-    self.SortContainer:Dock(RIGHT)
-    self.SortContainer:SetWide(lyx.ScaleW(200))
-    self.SortContainer:DockMargin(0, lyx.Scale(10), lyx.Scale(15), lyx.Scale(10))
-    self.SortContainer.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(255, 255, 255, 10))
-        draw.SimpleText("Sort by:", "GM3.Modules.Stats", lyx.Scale(10), h/2, Color(255, 255, 255, 100), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    end
-
-    self.SortDropdown = vgui.Create("DComboBox", self.SortContainer)
-    self.SortDropdown:Dock(FILL)
-    self.SortDropdown:DockMargin(lyx.Scale(60), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-    self.SortDropdown:SetFont("GM3.Modules.Stats")
-    self.SortDropdown:SetTextColor(Color(255, 255, 255))
-    self.SortDropdown:AddChoice("Name", "name", true)
-    self.SortDropdown:AddChoice("Category", "category")
-    self.SortDropdown:AddChoice("Author", "author")
-    self.SortDropdown.OnSelect = function(s, index, value, data)
-        self.CurrentSort = data
-        self:SortModules()
-    end
+    -- Module count label
+    self.CountLabel = vgui.Create("DLabel", self.ScrollPanel)
+    self.CountLabel:Dock(TOP)
+    self.CountLabel:DockMargin(lyx.Scale(5), 0, 0, lyx.Scale(10))
+    self.CountLabel:SetFont("GM3.Modules.Normal")
+    self.CountLabel:SetTextColor(Color(255, 255, 255, 180))
+    self.CountLabel:SetText("Showing all modules")
 end
 
-function PANEL:CreateCategoryTabs()
-    -- Category filter tabs
-    self.CategoryPanel = vgui.Create("DHorizontalScroller", self.Container)
-    self.CategoryPanel:Dock(TOP)
-    self.CategoryPanel:SetTall(lyx.Scale(50))
-    self.CategoryPanel:DockMargin(0, 0, 0, lyx.Scale(10))
-    self.CategoryPanel:SetOverlap(-lyx.Scale(5))
+function PANEL:CreateCategoryButtons()
+    -- Category button container
+    local catContainer = vgui.Create("DPanel", self.ScrollPanel)
+    catContainer:Dock(TOP)
+    catContainer:SetTall(lyx.Scale(50))
+    catContainer:DockMargin(0, 0, 0, lyx.Scale(15))
+    catContainer.Paint = function() end
 
-    -- All category button
-    local allBtn = vgui.Create("DButton")
-    allBtn:SetText("")
-    allBtn:SetWide(lyx.ScaleW(100))
+    local x = 0
+
+    -- All button
+    local allBtn = vgui.Create("lyx.TextButton2", catContainer)
+    allBtn:SetPos(x, 0)
+    allBtn:SetSize(lyx.ScaleW(120), lyx.Scale(40))
+    allBtn:SetText("All")
+    allBtn:SetFont("GM3.Modules.Category")
+    allBtn:SetBackgroundColor(Color(68, 68, 68))
     allBtn.Category = "All"
-    allBtn.Active = true
-    allBtn.Paint = function(s, w, h)
-        local accentColor = lyx.Colors.Accent or Color(0, 150, 255)
-        local col = s.Active and accentColor or Color(255, 255, 255, 20)
-        if s:IsHovered() and not s.Active then
-            col = Color(255, 255, 255, 40)
-        end
-
-        draw.RoundedBox(6, 0, 0, w, h, col)
-        draw.SimpleText("All", "GM3.Modules.Category", w/2, h/2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
-    allBtn.DoClick = function(s)
+    allBtn.DoClick = function()
         self:SelectCategory("All")
     end
 
-    self.CategoryPanel:AddPanel(allBtn)
+    x = x + lyx.ScaleW(125)
     self.CategoryButtons = {allBtn}
 
-    -- Add category buttons
-    for catName, catData in pairs(MODULE_CATEGORIES) do
-        local btn = vgui.Create("DButton")
-        btn:SetText("")
-        btn:SetWide(lyx.ScaleW(140))
+    -- Category buttons
+    for catName, _ in pairs(MODULE_CATEGORIES) do
+        local btn = vgui.Create("lyx.TextButton2", catContainer)
+        btn:SetPos(x, 0)
+        btn:SetSize(lyx.ScaleW(120), lyx.Scale(40))
+        btn:SetText(catName)
+        btn:SetFont("GM3.Modules.Category")
+        btn:SetBackgroundColor(Color(50, 50, 50))
         btn.Category = catName
-        btn.Active = false
-        btn.Color = catData.color
-        btn.Icon = catData.icon
-
-        btn.Paint = function(s, w, h)
-            local col = s.Active and s.Color or Color(255, 255, 255, 20)
-            if s:IsHovered() and not s.Active then
-                col = ColorAlpha(s.Color, 100)
-            end
-
-            draw.RoundedBox(6, 0, 0, w, h, col)
-
-            -- Icon and text
-            local text = s.Icon .. " " .. catName
-            draw.SimpleText(text, "GM3.Modules.Category", w/2, h/2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
-
-        btn.DoClick = function(s)
+        btn.DoClick = function()
             self:SelectCategory(catName)
         end
 
-        self.CategoryPanel:AddPanel(btn)
+        x = x + lyx.ScaleW(125)
         table.insert(self.CategoryButtons, btn)
     end
-end
 
-function PANEL:CreateModuleGrid()
-    -- Scrollable module grid
-    self.ScrollPanel = vgui.Create("DScrollPanel", self.Container)
-    self.ScrollPanel:Dock(FILL)
-    self.ScrollPanel:DockMargin(0, 0, 0, 0)
-
-    -- Custom scrollbar
-    local scrollbar = self.ScrollPanel:GetVBar()
-    scrollbar:SetWide(lyx.Scale(8))
-    scrollbar.Paint = function(s, w, h)
-        draw.RoundedBox(4, 0, 0, w, h, Color(255, 255, 255, 10))
-    end
-    scrollbar.btnGrip.Paint = function(s, w, h)
-        local accentColor = lyx.Colors.Accent or Color(0, 150, 255)
-        draw.RoundedBox(4, 0, 0, w, h, accentColor)
-    end
-    scrollbar.btnUp.Paint = function() end
-    scrollbar.btnDown.Paint = function() end
-
-    -- Grid layout
-    self.ModuleGrid = vgui.Create("DIconLayout", self.ScrollPanel)
-    self.ModuleGrid:Dock(FILL)
-    self.ModuleGrid:SetSpaceX(lyx.Scale(15))
-    self.ModuleGrid:SetSpaceY(lyx.Scale(15))
-    self.ModuleGrid:SetBorder(lyx.Scale(15))
-end
-
-function PANEL:CreateStatsPanel()
-    -- Statistics panel at bottom
-    self.StatsPanel = vgui.Create("DPanel", self.Container)
-    self.StatsPanel:Dock(BOTTOM)
-    self.StatsPanel:SetTall(lyx.Scale(40))
-    self.StatsPanel:DockMargin(0, lyx.Scale(10), 0, 0)
-    self.StatsPanel.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(255, 255, 255, 5))
-
-        -- Module count
-        local text = string.format("Showing %d of %d modules", table.Count(self.FilteredModules), table.Count(self.Modules))
-        draw.SimpleText(text, "GM3.Modules.Stats", lyx.Scale(15), h/2, Color(255, 255, 255, 150), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-
-        -- Category breakdown on the right
-        if self.CurrentCategory == "All" then
-            local x = w - lyx.Scale(15)
-            for catName, catData in pairs(MODULE_CATEGORIES) do
-                local count = 0
-                for _, module in pairs(self.Modules) do
-                    if module.category == catName then count = count + 1 end
-                end
-
-                -- Draw category dot and count
-                local text = catData.icon .. " " .. count
-                surface.SetFont("GM3.Modules.Stats")
-                local tw, th = surface.GetTextSize(text)
-
-                draw.SimpleText(text, "GM3.Modules.Stats", x - tw, h/2, catData.color, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                x = x - tw - lyx.Scale(20)
-            end
-        end
-    end
+    -- Update first button as active
+    self.CategoryButtons[1]:SetBackgroundColor(Color(100, 100, 100))
 end
 
 function PANEL:SelectCategory(category)
     self.CurrentCategory = category
 
-    -- Update button states
+    -- Update button colors
     for _, btn in ipairs(self.CategoryButtons) do
-        btn.Active = (btn.Category == category)
+        if btn.Category == category then
+            btn:SetBackgroundColor(Color(100, 100, 100))
+        else
+            btn:SetBackgroundColor(Color(50, 50, 50))
+        end
     end
 
-    -- Filter modules
     self:FilterModules()
 end
 
@@ -361,251 +209,165 @@ function PANEL:FilterModules()
         end
     end
 
-    self:SortModules()
+    self:RefreshModules()
 end
 
-function PANEL:SortModules()
-    -- Sort filtered modules
-    local sorted = {}
-    for name, module in pairs(self.FilteredModules) do
-        table.insert(sorted, module)
-    end
-
-    table.sort(sorted, function(a, b)
-        if self.CurrentSort == "name" then
-            return a.name < b.name
-        elseif self.CurrentSort == "category" then
-            if a.category == b.category then
-                return a.name < b.name
-            end
-            return a.category < b.category
-        elseif self.CurrentSort == "author" then
-            local authorA = a.data.author or "Unknown"
-            local authorB = b.data.author or "Unknown"
-            if authorA == authorB then
-                return a.name < b.name
-            end
-            return authorA < authorB
-        end
-        return a.name < b.name
-    end)
-
-    -- Rebuild grid
-    self:PopulateModules(sorted)
-end
-
-function PANEL:PopulateModules(moduleList)
+function PANEL:RefreshModules()
     -- Clear existing modules
-    self.ModuleGrid:Clear()
-
-    -- Use provided list or filtered modules
-    local modules = moduleList or {}
-    if not moduleList then
-        for name, module in pairs(self.FilteredModules) do
-            table.insert(modules, module)
+    if self.ModuleContainer then
+        for _, child in ipairs(self.ModuleContainer:GetChildren()) do
+            child:Remove()
         end
     end
 
-    -- Create module cards
-    for _, module in ipairs(modules) do
-        local card = self:CreateModuleCard(module)
-        self.ModuleGrid:Add(card)
+    -- Update count
+    local count = table.Count(self.FilteredModules)
+    local total = table.Count(self.Modules)
+    self.CountLabel:SetText(string.format("Showing %d of %d modules", count, total))
+
+    -- Create module panels
+    local y = 0
+    for name, module in pairs(self.FilteredModules) do
+        local modPanel = self:CreateModulePanel(module, self.ModuleContainer)
+        modPanel:SetPos(0, y)
+        y = y + modPanel:GetTall() + lyx.Scale(10)
     end
+
+    -- Adjust container height
+    self.ModuleContainer:SetTall(y)
 end
 
-function PANEL:CreateModuleCard(module)
-    local card = vgui.Create("DPanel")
-    card:SetSize(lyx.ScaleW(280), lyx.Scale(320))
-    card.Module = module
-    card.Expanded = false
+function PANEL:CreateModulePanel(module, parent)
+    local panel = vgui.Create("DPanel", parent)
+    panel:SetSize(parent:GetWide() - lyx.Scale(10), lyx.Scale(200))
 
-    -- Get category data
-    local catData = MODULE_CATEGORIES[module.category] or {color = Color(158, 158, 158), icon = "🔧"}
+    -- Count arguments to determine panel height
+    local argCount = module.data.args and table.Count(module.data.args) or 0
+    local panelHeight = lyx.Scale(120 + (argCount * 35))
+    panel:SetTall(panelHeight)
 
-    card.Paint = function(s, w, h)
-        -- Card background with hover effect
-        local alpha = s:IsHovered() and 40 or 25
-        draw.RoundedBox(8, 0, 0, w, h, Color(255, 255, 255, alpha))
+    panel.Paint = function(s, w, h)
+        -- Background matching other components
+        draw.RoundedBox(4, 0, 0, w, h, Color(94, 88, 88, 50))
 
-        -- Category color accent at top
-        draw.RoundedBoxEx(8, 0, 0, w, lyx.Scale(4), catData.color, true, true, false, false)
-
-        -- Border on hover
-        if s:IsHovered() then
-            surface.SetDrawColor(catData.color.r, catData.color.g, catData.color.b, 100)
-            surface.DrawOutlinedRect(0, 0, w, h, 2)
+        -- Category indicator line
+        local catIcon = CATEGORY_ICONS[module.category]
+        if catIcon then
+            -- Draw icon if available
+            lyx.DrawImgur(lyx.Scale(10), lyx.Scale(10), lyx.Scale(24), lyx.Scale(24), catIcon, Color(255, 255, 255, 100))
         end
     end
 
     -- Module name
-    local nameLabel = vgui.Create("DLabel", card)
-    nameLabel:SetPos(lyx.Scale(15), lyx.Scale(15))
-    nameLabel:SetFont("GM3.Modules.Category")
+    local nameLabel = vgui.Create("DLabel", panel)
+    nameLabel:SetPos(lyx.Scale(45), lyx.Scale(10))
+    nameLabel:SetFont("GM3.Modules.Title")
     nameLabel:SetText(module.data.name or module.name)
     nameLabel:SetTextColor(Color(255, 255, 255))
     nameLabel:SizeToContents()
 
-    -- Category badge
-    local catBadge = vgui.Create("DPanel", card)
-    catBadge:SetPos(card:GetWide() - lyx.ScaleW(90), lyx.Scale(15))
-    catBadge:SetSize(lyx.ScaleW(75), lyx.Scale(25))
-    catBadge.Paint = function(s, w, h)
-        draw.RoundedBox(12, 0, 0, w, h, ColorAlpha(catData.color, 150))
-        draw.SimpleText(catData.icon .. " " .. module.category, "GM3.Modules.Stats", w/2, h/2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
+    -- Category label
+    local catLabel = vgui.Create("DLabel", panel)
+    catLabel:SetPos(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(10))
+    catLabel:SetFont("GM3.Modules.Normal")
+    catLabel:SetText(module.category)
+    catLabel:SetTextColor(Color(255, 255, 255, 150))
+    catLabel:SizeToContents()
 
     -- Description
-    local descPanel = vgui.Create("DPanel", card)
-    descPanel:SetPos(lyx.Scale(15), lyx.Scale(50))
-    descPanel:SetSize(card:GetWide() - lyx.Scale(30), lyx.Scale(60))
-    descPanel.Paint = function(s, w, h)
-        -- Word wrap description - using RichText for better handling
-        local desc = module.data.description or "No description available"
-        -- Truncate long descriptions
-        if #desc > 100 then
-            desc = string.sub(desc, 1, 97) .. "..."
-        end
+    local desc = vgui.Create("DLabel", panel)
+    desc:SetPos(lyx.Scale(15), lyx.Scale(40))
+    desc:SetSize(panel:GetWide() - lyx.Scale(30), lyx.Scale(40))
+    desc:SetFont("GM3.Modules.Normal")
+    desc:SetText(module.data.description or "No description")
+    desc:SetTextColor(Color(255, 255, 255, 180))
+    desc:SetWrap(true)
+    desc:SetAutoStretchVertical(true)
 
-        surface.SetFont("GM3.Modules.Stats")
-        surface.SetTextColor(255, 255, 255, 180)
+    -- Arguments
+    local args = {}
+    local argY = lyx.Scale(85)
 
-        -- Simple word wrap implementation
-        local words = string.Explode(" ", desc)
-        local line = ""
-        local y = 0
-        local lineHeight = lyx.Scale(16)
-
-        for _, word in ipairs(words) do
-            local testLine = line .. word .. " "
-            local tw, th = surface.GetTextSize(testLine)
-
-            if tw > w - lyx.Scale(10) and line ~= "" then
-                draw.SimpleText(line, "GM3.Modules.Stats", 0, y, Color(255, 255, 255, 180), TEXT_ALIGN_LEFT)
-                line = word .. " "
-                y = y + lineHeight
-
-                if y > h - lineHeight then break end -- Stop if we run out of space
-            else
-                line = testLine
-            end
-        end
-
-        if line ~= "" and y <= h - lineHeight then
-            draw.SimpleText(line, "GM3.Modules.Stats", 0, y, Color(255, 255, 255, 180), TEXT_ALIGN_LEFT)
-        end
-    end
-
-    -- Author info
-    if module.data.author then
-        local authorLabel = vgui.Create("DLabel", card)
-        authorLabel:SetPos(lyx.Scale(15), lyx.Scale(120))
-        authorLabel:SetFont("GM3.Modules.Stats")
-        authorLabel:SetText("By " .. module.data.author)
-        authorLabel:SetTextColor(Color(255, 255, 255, 100))
-        authorLabel:SizeToContents()
-    end
-
-    -- Arguments panel (if module has args)
-    if module.data.args and table.Count(module.data.args) > 0 then
-        local argsPanel = vgui.Create("DScrollPanel", card)
-        argsPanel:SetPos(lyx.Scale(15), lyx.Scale(150))
-        argsPanel:SetSize(card:GetWide() - lyx.Scale(30), lyx.Scale(100))
-        argsPanel.Paint = function(s, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, Color(0, 0, 0, 30))
-        end
-
-        local args = {}
+    if module.data.args then
         for k, v in pairs(module.data.args) do
             if v.type == "string" then
-                local entry = vgui.Create("DTextEntry", argsPanel)
-                entry:Dock(TOP)
-                entry:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), 0)
-                entry:SetTall(lyx.Scale(25))
-                entry:SetPlaceholderText(v.name or v.def)
+                local entry = vgui.Create("lyx.TextEntry2", panel)
+                entry:SetPos(lyx.Scale(15), argY)
+                entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
+                entry:SetPlaceholderText(v.name or v.def or "Text")
                 entry:SetValue(v.def or "")
-                entry:SetFont("GM3.Modules.Stats")
-                args[k] = v.def
+                args[k] = v.def or ""
 
                 entry.OnChange = function(s)
                     args[k] = s:GetValue()
                 end
+
+                argY = argY + lyx.Scale(35)
+
             elseif v.type == "number" then
-                local entry = vgui.Create("DTextEntry", argsPanel)
-                entry:Dock(TOP)
-                entry:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), 0)
-                entry:SetTall(lyx.Scale(25))
-                entry:SetPlaceholderText(v.name or tostring(v.def))
+                local entry = vgui.Create("lyx.TextEntry2", panel)
+                entry:SetPos(lyx.Scale(15), argY)
+                entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
+                entry:SetPlaceholderText(v.name or tostring(v.def) or "Number")
                 entry:SetValue(tostring(v.def or 0))
                 entry:SetNumeric(true)
-                entry:SetFont("GM3.Modules.Stats")
                 args[k] = tonumber(v.def) or 0
 
                 entry.OnChange = function(s)
                     args[k] = tonumber(s:GetValue()) or 0
                 end
-            elseif v.type == "boolean" then
-                local check = vgui.Create("DCheckBoxLabel", argsPanel)
-                check:Dock(TOP)
-                check:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), 0)
-                check:SetText(v.name or "Enabled")
-                check:SetChecked(v.def)
-                check:SetFont("GM3.Modules.Stats")
-                args[k] = v.def
 
-                check.OnChange = function(s, val)
+                argY = argY + lyx.Scale(35)
+
+            elseif v.type == "boolean" then
+                local check = vgui.Create("lyx.Checkbox2", panel)
+                check:SetPos(lyx.Scale(15), argY)
+                check:SetSize(lyx.Scale(25), lyx.Scale(25))
+                check:SetToggle(v.def or false)
+                args[k] = v.def or false
+
+                local checkLabel = vgui.Create("DLabel", panel)
+                checkLabel:SetPos(lyx.Scale(45), argY)
+                checkLabel:SetFont("GM3.Modules.Normal")
+                checkLabel:SetText(v.name or "Enabled")
+                checkLabel:SetTextColor(Color(255, 255, 255, 180))
+                checkLabel:SizeToContents()
+
+                check.OnValueChange = function(s, val)
                     args[k] = val
                 end
+
+                argY = argY + lyx.Scale(35)
             end
         end
-
-        card.Arguments = args
     end
 
     -- Run button
-    local runBtn = vgui.Create("DButton", card)
-    runBtn:SetPos(lyx.Scale(15), card:GetTall() - lyx.Scale(45))
-    runBtn:SetSize(card:GetWide() - lyx.Scale(30), lyx.Scale(35))
-    runBtn:SetText("")
-    runBtn.Paint = function(s, w, h)
-        local col = catData.color
-        if s:IsHovered() then
-            col = ColorAlpha(col, 200)
-        else
-            col = ColorAlpha(col, 150)
-        end
-
-        draw.RoundedBox(6, 0, 0, w, h, col)
-        draw.SimpleText("▶ Run Module", "GM3.Modules.Category", w/2, h/2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
+    local runBtn = vgui.Create("lyx.TextButton2", panel)
+    runBtn:SetPos(panel:GetWide() - lyx.ScaleW(120), lyx.Scale(40))
+    runBtn:SetSize(lyx.ScaleW(100), lyx.Scale(35))
+    runBtn:SetText("Run")
+    runBtn:SetFont("GM3.Modules.Category")
+    runBtn:SetBackgroundColor(Color(68, 68, 68))
 
     runBtn.DoClick = function()
         surface.PlaySound("buttons/button15.wav")
 
-        -- Send module execution request
         net.Start("gm3:tool:run")
         net.WriteString(module.data.name)
-        net.WriteTable(card.Arguments or {})
+        net.WriteTable(args)
         net.SendToServer()
 
-        -- Visual feedback
-        runBtn:SetEnabled(false)
-        timer.Simple(1, function()
-            if IsValid(runBtn) then
-                runBtn:SetEnabled(true)
-            end
-        end)
-
-        -- Success notification
-        notification.AddLegacy("Module '" .. module.data.name .. "' executed!", NOTIFY_GENERIC, 3)
+        -- Feedback
+        notification.AddLegacy("Running: " .. module.data.name, NOTIFY_GENERIC, 3)
     end
 
-    return card
+    return panel
 end
 
 function PANEL:Paint(w, h)
-    -- Main background
-    local bgColor = lyx.Colors.Background or Color(30, 30, 30)
-    draw.RoundedBox(8, 0, 0, w, h, bgColor)
+    -- Match the style of other panels
+    draw.RoundedBox(4, 0, 0, w, h, lyx.Colors.Foreground)
 end
 
 vgui.Register("GM3.Pages.Modules", PANEL)
