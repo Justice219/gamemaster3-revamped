@@ -526,6 +526,11 @@ do
     lyx:NetAdd("gm3:removeHash", {})  -- Hash removal
     lyx:NetAdd("gm3:setting:syncSetting", {})  -- Settings sync to client
 
+    -- OPSAT tool network messages
+    lyx:NetAdd("gm3:tools:opsatRemove", {})  -- Remove OPSAT display
+    lyx:NetAdd("gm3:tools:opsatSet", {})  -- Set OPSAT display
+    lyx:NetAdd("gm3:tools:requestOpsat", {})  -- Request OPSAT data on join
+
     --[[
         Handle client settings request on connect
     ]]

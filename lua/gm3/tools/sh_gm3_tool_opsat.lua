@@ -71,10 +71,23 @@ if CLIENT then
     })
 
     local function CreateOpsatPanel(args)
-        local primaryColor = gm3.settings["gm3_opsat_primaryColor"].value
-        primaryColor = Color(primaryColor.r, primaryColor.g, primaryColor.b)
-        local secondaryColor = gm3.settings["gm3_opsat_secondaryColor"].value
-        secondaryColor = Color(secondaryColor.r, secondaryColor.g, secondaryColor.b)
+        -- Get primary color with fallback to default
+        local primaryColor = Color(189, 88, 88)  -- Default color
+        if gm3.settings and gm3.settings["gm3_opsat_primaryColor"] then
+            local color = gm3.settings["gm3_opsat_primaryColor"].value
+            if color then
+                primaryColor = Color(color.r or 189, color.g or 88, color.b or 88)
+            end
+        end
+
+        -- Get secondary color with fallback to default
+        local secondaryColor = Color(255, 255, 255)  -- Default color
+        if gm3.settings and gm3.settings["gm3_opsat_secondaryColor"] then
+            local color = gm3.settings["gm3_opsat_secondaryColor"].value
+            if color then
+                secondaryColor = Color(color.r or 255, color.g or 255, color.b or 255)
+            end
+        end
 
         local back = vgui.Create("DPanel")
         back:SetSize(ScaleW(325), ScaleH(150))
