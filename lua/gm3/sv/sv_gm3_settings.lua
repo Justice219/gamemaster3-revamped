@@ -98,10 +98,10 @@ do
         func = function(ply)
             for k, v in pairs(gm3.settings) do
                 if v.syncWithClient then
-                    net.Start("gm3:setting:syncSetting")
-                        net.WriteString(v.name)
-                        net.WriteType(v.value)
-                    net.Send(ply)
+                    lyx:NetSend("gm3:setting:syncSetting", {
+                        name = v.name,
+                        value = v.value
+                    }, ply)
                 end
             end
         end

@@ -247,7 +247,7 @@ if CLIENT then
     local effectData = {}
 
     -- Handle scene start
-    lyx:NetReceive("gm3:tools:scenedirector:start", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:scenedirector:start", function(ply, tbl)
         activeScene = {
             mode = tbl.mode,
             hideHUD = tbl.hideHUD,
@@ -257,7 +257,7 @@ if CLIENT then
     end)
 
     -- Handle camera setup
-    lyx:NetReceive("gm3:tools:scenedirector:camera", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:scenedirector:camera", function(ply, tbl)
         cameraData = {
             mode = tbl.mode,
             target = tbl.target,
@@ -268,7 +268,7 @@ if CLIENT then
     end)
 
     -- Handle subtitles
-    lyx:NetReceive("gm3:tools:scenedirector:subtitle", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:scenedirector:subtitle", function(ply, tbl)
         subtitleData = {
             text = tbl.text,
             speaker = tbl.speaker,
@@ -278,7 +278,7 @@ if CLIENT then
     end)
 
     -- Handle effects
-    lyx:NetReceive("gm3:tools:scenedirector:effect", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:scenedirector:effect", function(ply, tbl)
         effectData = {
             effect = tbl.effect,
             intensity = tbl.intensity,
@@ -292,7 +292,7 @@ if CLIENT then
     end)
 
     -- Handle scene end
-    lyx:NetReceive("gm3:tools:scenedirector:end", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:scenedirector:end", function(ply, tbl)
         activeScene = {}
         cameraData = {}
         subtitleData = {}

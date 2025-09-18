@@ -483,13 +483,13 @@ if CLIENT then
     local captureNotifications = {}
 
     -- Receive territory updates
-    lyx:NetReceive("gm3:tools:territory:update", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:territory:update", function(ply, tbl)
         territories = tbl.territories or {}
         territoryPoints = tbl.points or {}
     end)
 
     -- Receive capture notifications
-    lyx:NetReceive("gm3:tools:territory:capture", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:territory:capture", function(ply, tbl)
         table.insert(captureNotifications, {
             territory = tbl.territory,
             newFaction = tbl.newFaction,
@@ -502,12 +502,12 @@ if CLIENT then
     end)
 
     -- Receive contested notifications
-    lyx:NetReceive("gm3:tools:territory:contested", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:territory:contested", function(ply, tbl)
         -- Could add visual indicator for contested zones
     end)
 
     -- Reset territories
-    lyx:NetReceive("gm3:tools:territory:reset", function(ply, tbl)
+    lyx.NetReceive("gm3:tools:territory:reset", function(ply, tbl)
         territories = {}
         territoryPoints = {}
         captureNotifications = {}
