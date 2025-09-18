@@ -12,7 +12,16 @@ function PANEL:Init()
         RankComponent:Dock(TOP)
         RankComponent:SetTall(lyx.Scale(200))
         RankComponent:DockMargin(lyx.ScaleW(10), lyx.Scale(10), lyx.ScaleW(10), lyx.Scale(10))
-        RankComponent:SetRank(k, v.panel)
+
+        -- Handle both old format (boolean) and new format (table with panel property)
+        local hasPanel = false
+        if type(v) == "boolean" then
+            hasPanel = v
+        elseif type(v) == "table" and v.panel ~= nil then
+            hasPanel = v.panel
+        end
+
+        RankComponent:SetRank(k, hasPanel)
     end
 
     local RankEntry = vgui.Create("lyx.TextEntry2", self.ScrollPanel)
