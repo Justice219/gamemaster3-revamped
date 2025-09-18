@@ -1,10 +1,12 @@
 gm3 = gm3
+lyx = lyx
+
+-- Register network string on both client and server
+lyx:NetAdd("gm3:tools:screenmessage", {})
 
 if SERVER then
     gm3 = gm3
     lyx = lyx
-
-    lyx:NetAdd("gm3:tools:screenmessage", {})
     local tool = GM3Module.new(
         "Screen Message",
         "Sends a message to the server's screen.", 

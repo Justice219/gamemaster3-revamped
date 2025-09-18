@@ -6,31 +6,24 @@ if SERVER then
     
     local tool = GM3Module.new(
         "Molest",
-        "Touches somebody inappropriately. SteamId or Name.", 
+        "Touches somebody inappropriately.", 
         "Justice#4956",
         {
-            ["Identifier"] = {
-                type = "string",
-                def = "STEAM_0:0:00000000"
+            ["Target Player"] = {
+                type = "player",
+                def = ""
             },
         },
         function(ply, args)
-            local ogpos = nil
-            local target = player.GetBySteamID(args["Identifier"])
+            -- Get the target player using gm3 helper function
+            local target = gm3:GetPlayerBySteamID(args["Target Player"])
             if not IsValid(target) then
-                players = player.GetAll()
-                for k,v in pairs(players) do
-                    if v:Nick() == args["Identifier"] then
-                        target = v
-                    end
-                end
-            end
-            if not IsValid(target) then
-                lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Error",["color2"] = Color(255,255,255),["text"] = "Player not found!",
+                lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Error",["color2"] = Color(255,255,255),["text"] = "Player not found! Please select a valid player.",
                     ["ply"] = ply
                 })
                 return
             end
+            local ogpos = nil
             ogpos = target:GetPos()
 
             // freeze the targets

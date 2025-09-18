@@ -1,10 +1,12 @@
 gm3 = gm3
+lyx = lyx
+
+-- Register network string on both client and server
+lyx:NetAdd("gm3:tools:blackscreen", {})
 
 if SERVER then
     gm3 = gm3
     lyx = lyx
-
-    lyx:NetAdd("gm3:tools:blackscreen", {})
 
     local tool = GM3Module.new(
         "Black Screen",
