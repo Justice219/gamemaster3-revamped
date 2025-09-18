@@ -12,10 +12,33 @@ local PANEL = {}
 ]]
 
 -- Register fonts for the modules page
-lyx.RegisterFont("GM3.Modules.Title", "Open Sans Bold", 24)
-lyx.RegisterFont("GM3.Modules.Category", "Open Sans SemiBold", 18)
-lyx.RegisterFont("GM3.Modules.Stats", "Open Sans", 14)
-lyx.RegisterFont("GM3.Modules.Search", "Open Sans", 16)
+surface.CreateFont("GM3.Modules.Title", {
+    font = "Open Sans Bold",
+    size = lyx.Scale(24),
+    weight = 600,
+    antialias = true
+})
+
+surface.CreateFont("GM3.Modules.Category", {
+    font = "Open Sans SemiBold",
+    size = lyx.Scale(18),
+    weight = 500,
+    antialias = true
+})
+
+surface.CreateFont("GM3.Modules.Stats", {
+    font = "Open Sans",
+    size = lyx.Scale(14),
+    weight = 400,
+    antialias = true
+})
+
+surface.CreateFont("GM3.Modules.Search", {
+    font = "Open Sans",
+    size = lyx.Scale(16),
+    weight = 400,
+    antialias = true
+})
 
 -- Module categories for better organization
 local MODULE_CATEGORIES = {
@@ -290,7 +313,7 @@ function PANEL:CreateStatsPanel()
                 -- Draw category dot and count
                 local text = catData.icon .. " " .. count
                 surface.SetFont("GM3.Modules.Stats")
-                local tw = surface.GetTextSize(text)
+                local tw, th = surface.GetTextSize(text)
 
                 draw.SimpleText(text, "GM3.Modules.Stats", x - tw, h/2, catData.color, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 x = x - tw - lyx.Scale(20)
@@ -436,9 +459,40 @@ function PANEL:CreateModuleCard(module)
     descPanel:SetPos(lyx.Scale(15), lyx.Scale(50))
     descPanel:SetSize(card:GetWide() - lyx.Scale(30), lyx.Scale(60))
     descPanel.Paint = function(s, w, h)
-        -- Word wrap description
+        -- Word wrap description - using RichText for better handling
         local desc = module.data.description or "No description available"
-        draw.DrawText(desc, "GM3.Modules.Stats", 0, 0, Color(255, 255, 255, 180), TEXT_ALIGN_LEFT)
+        -- Truncate long descriptions
+        if #desc > 100 then
+            desc = string.sub(desc, 1, 97) .. "..."
+        end
+
+        surface.SetFont("GM3.Modules.Stats")
+        surface.SetTextColor(255, 255, 255, 180)
+
+        -- Simple word wrap implementation
+        local words = string.Explode(" ", desc)
+        local line = ""
+        local y = 0
+        local lineHeight = lyx.Scale(16)
+
+        for _, word in ipairs(words) do
+            local testLine = line .. word .. " "
+            local tw, th = surface.GetTextSize(testLine)
+
+            if tw > w - lyx.Scale(10) and line ~= "" then
+                draw.SimpleText(line, "GM3.Modules.Stats", 0, y, Color(255, 255, 255, 180), TEXT_ALIGN_LEFT)
+                line = word .. " "
+                y = y + lineHeight
+
+                if y > h - lineHeight then break end -- Stop if we run out of space
+            else
+                line = testLine
+            end
+        end
+
+        if line ~= "" and y <= h - lineHeight then
+            draw.SimpleText(line, "GM3.Modules.Stats", 0, y, Color(255, 255, 255, 180), TEXT_ALIGN_LEFT)
+        end
     end
 
     -- Author info
