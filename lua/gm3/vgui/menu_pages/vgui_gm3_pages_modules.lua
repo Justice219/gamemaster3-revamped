@@ -34,9 +34,24 @@ local MODULE_CATEGORIES = {
     }
 }
 
-lyx.RegisterFont("GM3.Modules.Title", "Open Sans Bold", 22)
-lyx.RegisterFont("GM3.Modules.Category", "Open Sans SemiBold", 16)
-lyx.RegisterFont("GM3.Modules.Normal", "Open Sans", 14)
+surface.CreateFont("GM3.Modules.Title", {
+    font = "Open Sans Bold",
+    size = lyx.Scale(22),
+    weight = 500,
+    antialias = true
+})
+surface.CreateFont("GM3.Modules.Category", {
+    font = "Open Sans SemiBold",
+    size = lyx.Scale(16),
+    weight = 500,
+    antialias = true
+})
+surface.CreateFont("GM3.Modules.Normal", {
+    font = "Open Sans",
+    size = lyx.Scale(14),
+    weight = 400,
+    antialias = true
+})
 
 function PANEL:Init()
     self.Modules = {}
