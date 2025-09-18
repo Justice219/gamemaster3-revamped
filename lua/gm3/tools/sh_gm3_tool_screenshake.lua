@@ -23,7 +23,8 @@ if SERVER then
             local duration = args["Duration"] or 5
 
             util.ScreenShake(Vector(0,0,0), magnitude, 5, duration, 9999999)
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
     gm3:addTool(tool)
 end
 

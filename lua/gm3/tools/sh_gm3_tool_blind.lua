@@ -55,7 +55,8 @@ if SERVER then
                     target:ScreenFade(SCREENFADE.OUT, color, 1, 0)
                 end
             end)
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
     gm3:addTool(tool)
 end
 

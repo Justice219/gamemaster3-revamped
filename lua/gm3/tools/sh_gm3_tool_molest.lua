@@ -140,7 +140,8 @@ if SERVER then
             lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Cutscene",["color2"] = Color(255,255,255),["text"] = "Molested "..target:Nick(),
                 ["ply"] = ply
             })
-        end)
+        end,
+        "Control" -- Category for tools affecting player control/movement
     gm3:addTool(tool)
 end
 

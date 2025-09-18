@@ -30,7 +30,9 @@ if SERVER then
             lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Black Screen",["color2"] = Color(255,255,255),["text"] = "Black Screen toggled",
                 ["ply"] = ply
             })
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
+    )
     gm3:addTool(tool)
 end
 

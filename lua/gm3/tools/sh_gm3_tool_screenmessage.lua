@@ -37,7 +37,8 @@ if SERVER then
                 net.WriteInt(args["Duration"], 32)
                 net.WriteInt(args["Fade Time"], 32)
             net.Broadcast()
-        end)
+        end,
+        "Communication" -- Category for tools affecting chat/communication
     gm3:addTool(tool)
 end
 

@@ -23,7 +23,8 @@ if SERVER then
                     v:Kill()
                 end
             end
-        end)
+        end,
+        "Utility" -- Category for general utility tools
     gm3:addTool(tool)
 end
 

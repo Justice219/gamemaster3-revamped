@@ -25,7 +25,8 @@ if SERVER then
             lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Player ESP",["color2"] = Color(255,255,255),["text"] = "ESP Toggled!",
                 ["ply"] = ply
             })
-        end)
+        end,
+        "Utility" -- Category for general utility tools
     gm3:addTool(tool)
 end
 

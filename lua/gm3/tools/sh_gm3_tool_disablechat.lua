@@ -47,7 +47,8 @@ if SERVER then
                 })
                 gm3.disableChat[args["Chat Command"]] = chatHook
             end
-        end)
+        end,
+        "Communication" -- Category for tools affecting chat/communication
     gm3:addTool(tool)
 end
 

@@ -33,7 +33,8 @@ if SERVER then
                     ["ply"] = ply
                 })
             end
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
     gm3:addTool(tool)
 end
 

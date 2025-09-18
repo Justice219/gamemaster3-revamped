@@ -56,7 +56,8 @@ if SERVER then
                     target:SetMaterial("")
                 end
             end)
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
     gm3:addTool(tool)
 end
 

@@ -42,7 +42,8 @@ if SERVER then
                     target:SetModelScale(1, 1)
                 end
             end)
-        end)
+        end,
+        "Control" -- Category for tools affecting player control/movement
     gm3:addTool(tool)
 end
 

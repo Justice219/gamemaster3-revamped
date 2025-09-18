@@ -49,7 +49,8 @@ if SERVER then
                     ply:SendLua('hook.Remove("Move", "DrunkControl")')
                 end
             end)
-        end)
+        end,
+        "Visual" -- Category for tools affecting player vision/display
     gm3:addTool(tool)
 end
 

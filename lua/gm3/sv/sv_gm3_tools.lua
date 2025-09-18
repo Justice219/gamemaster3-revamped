@@ -12,13 +12,14 @@ do
     GM3Module = {}
     GM3Module.__index = GM3Module
 
-    function GM3Module.new(name, description, author, args, func)
+    function GM3Module.new(name, description, author, args, func, category)
         local self = setmetatable({}, GM3Module)
         self.name = name
         self.description = description
         self.func = func
         self.args = args
         self.author = author
+        self.category = category or "Utility" -- Default to Utility if not specified
 
         return self
     end

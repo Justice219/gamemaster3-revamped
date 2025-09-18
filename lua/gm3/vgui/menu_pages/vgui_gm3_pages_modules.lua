@@ -70,13 +70,19 @@ end
 
 function PANEL:CategorizeModules()
     for name, module in pairs(gm3.tools) do
-        local category = "Utility"
+        local category = "Utility" -- Default category
 
-        for catName, catData in pairs(MODULE_CATEGORIES) do
-            for _, moduleName in ipairs(catData.modules) do
-                if string.find(string.lower(name), string.lower(moduleName)) then
-                    category = catName
-                    break
+        -- First check if the module has a category field
+        if module.category then
+            category = module.category
+        else
+            -- Fall back to name-based categorization
+            for catName, catData in pairs(MODULE_CATEGORIES) do
+                for _, moduleName in ipairs(catData.modules) do
+                    if string.find(string.lower(name), string.lower(moduleName)) then
+                        category = catName
+                        break
+                    end
                 end
             end
         end
@@ -106,7 +112,7 @@ function PANEL:CreateHeader()
     self.SearchEntry:Dock(FILL)
     self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
     self.SearchEntry:SetPlaceholderText("Search modules...")
-    self.SearchEntry:SetFont("GM3.Modules.Normal")
+    -- lyx.TextEntry2 doesn't have SetFont, it uses its own styling
     self.SearchEntry.OnChange = function(s)
         self.SearchText = s:GetValue()
         self:FilterModules()
@@ -183,29 +189,36 @@ function PANEL:SelectCategory(category)
 end
 
 function PANEL:FilterModules()
+    -- Clear filtered modules first
     self.FilteredModules = {}
 
-    for name, module in pairs(self.Modules) do
-        local include = true
+    -- If showing all and no search, show everything
+    if self.CurrentCategory == "All" and (not self.SearchText or self.SearchText == "") then
+        self.FilteredModules = table.Copy(self.Modules)
+    else
+        -- Apply filters
+        for name, module in pairs(self.Modules) do
+            local include = true
 
-        -- Category filter
-        if self.CurrentCategory ~= "All" and module.category ~= self.CurrentCategory then
-            include = false
-        end
-
-        -- Search filter
-        if include and self.SearchText ~= "" then
-            local searchLower = string.lower(self.SearchText)
-            local nameMatch = string.find(string.lower(module.name), searchLower)
-            local descMatch = module.data.description and string.find(string.lower(module.data.description), searchLower)
-
-            if not (nameMatch or descMatch) then
+            -- Category filter (skip if "All" is selected)
+            if self.CurrentCategory ~= "All" and module.category ~= self.CurrentCategory then
                 include = false
             end
-        end
 
-        if include then
-            self.FilteredModules[name] = module
+            -- Search filter
+            if include and self.SearchText and self.SearchText ~= "" then
+                local searchLower = string.lower(self.SearchText)
+                local nameMatch = string.find(string.lower(module.name), searchLower)
+                local descMatch = module.data.description and string.find(string.lower(module.data.description), searchLower)
+
+                if not (nameMatch or descMatch) then
+                    include = false
+                end
+            end
+
+            if include then
+                self.FilteredModules[name] = module
+            end
         end
     end
 

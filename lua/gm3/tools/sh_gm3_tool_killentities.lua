@@ -24,7 +24,8 @@ if SERVER then
             lyx:MessagePlayer({["type"] = "header",["color1"] = Color(0,255,213),["header"] = "Kill Entities",["color2"] = Color(255,255,255),["text"] = "Killed all entities of class " .. args["Entity Path"] .. "!",
                 ["ply"] = ply
             })
-        end)
+        end,
+        "Environment" -- Category for tools affecting the game environment
     gm3:addTool(tool)
 end
 

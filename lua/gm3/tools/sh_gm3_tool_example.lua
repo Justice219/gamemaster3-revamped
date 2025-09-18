@@ -50,7 +50,9 @@ if SERVER then
                 ["color2"] = Color(255,255,255),
                 ["text"] = "This is an example tool! Age: " .. args["age"] .. " Name: " .. args["name"]
             })
-        end)
+        end,
+        "Utility" --? category - Options: Visual, Control, Communication, Environment, Utility
+    )
 
     --+ Add the tool to the GM3 tool list
     --! THIS IS VERY IMPORTANT !--

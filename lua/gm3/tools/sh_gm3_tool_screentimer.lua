@@ -41,7 +41,8 @@ if SERVER then
                     net.Broadcast()
                 end)
             end
-        end)
+        end,
+        "Communication" -- Category for tools affecting chat/communication
     gm3:addTool(tool)
 
     lyx:NetAdd("gm3:tools:requestTimer", {
