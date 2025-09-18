@@ -15,6 +15,15 @@ local CATEGORY_ICONS = {
     ["Utility"] = "lOMzrJ6"     -- Modules icon (gears)
 }
 
+-- Category colors for visual distinction
+local CATEGORY_COLORS = {
+    ["Visual"] = Color(147, 112, 219),      -- Purple for visual effects
+    ["Control"] = Color(52, 152, 219),      -- Blue for control tools
+    ["Communication"] = Color(46, 204, 113), -- Green for communication
+    ["Environment"] = Color(230, 126, 34),   -- Orange for environment
+    ["Utility"] = Color(155, 89, 182)        -- Light purple for utility
+}
+
 -- Module categories with consistent theming
 local MODULE_CATEGORIES = {
     ["Visual"] = {
@@ -127,6 +136,7 @@ function PANEL:CreateHeader()
     self.SearchEntry:Dock(FILL)
     self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
     self.SearchEntry:SetPlaceholderText("Search modules...")
+    self.SearchEntry:SetBackgroundColor(lyx.Colors.Background)
     -- lyx.TextEntry2 doesn't have SetFont, it uses its own styling
     self.SearchEntry.OnChange = function(s)
         self.SearchText = s:GetValue()
@@ -274,15 +284,21 @@ function PANEL:CreateModulePanel(module, parent)
     local panelHeight = lyx.Scale(120 + (argCount * 35))
     panel:SetTall(panelHeight)
 
+    -- Get category color
+    local categoryColor = CATEGORY_COLORS[module.category] or Color(100, 100, 100)
+
     panel.Paint = function(s, w, h)
         -- Background matching other components
         draw.RoundedBox(4, 0, 0, w, h, Color(94, 88, 88, 50))
 
+        -- Category color indicator stripe on the left
+        draw.RoundedBoxEx(4, 0, 0, lyx.Scale(4), h, categoryColor, true, false, true, false)
+
         -- Category indicator line
         local catIcon = CATEGORY_ICONS[module.category]
         if catIcon then
-            -- Draw icon if available
-            lyx.DrawImgur(lyx.Scale(10), lyx.Scale(10), lyx.Scale(24), lyx.Scale(24), catIcon, Color(255, 255, 255, 100))
+            -- Draw icon with category color tint
+            lyx.DrawImgur(lyx.Scale(10), lyx.Scale(10), lyx.Scale(24), lyx.Scale(24), catIcon, categoryColor)
         end
     end
 
@@ -294,12 +310,12 @@ function PANEL:CreateModulePanel(module, parent)
     nameLabel:SetTextColor(Color(255, 255, 255))
     nameLabel:SizeToContents()
 
-    -- Category label
+    -- Category label with color coding
     local catLabel = vgui.Create("DLabel", panel)
     catLabel:SetPos(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(10))
     catLabel:SetFont("GM3.Modules.Normal")
     catLabel:SetText(module.category)
-    catLabel:SetTextColor(Color(255, 255, 255, 150))
+    catLabel:SetTextColor(categoryColor)
     catLabel:SizeToContents()
 
     -- Description
@@ -324,6 +340,8 @@ function PANEL:CreateModulePanel(module, parent)
                 entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
                 entry:SetPlaceholderText(v.name or v.def or "Text")
                 entry:SetValue(v.def or "")
+                -- Set background to darker color for contrast
+                entry:SetBackgroundColor(lyx.Colors.Background)
                 args[k] = v.def or ""
 
                 entry.OnChange = function(s)
@@ -339,6 +357,8 @@ function PANEL:CreateModulePanel(module, parent)
                 entry:SetPlaceholderText(v.name or tostring(v.def) or "Number")
                 entry:SetValue(tostring(v.def or 0))
                 entry:SetNumeric(true)
+                -- Set background to darker color for contrast
+                entry:SetBackgroundColor(lyx.Colors.Background)
                 args[k] = tonumber(v.def) or 0
 
                 entry.OnChange = function(s)
@@ -370,13 +390,13 @@ function PANEL:CreateModulePanel(module, parent)
         end
     end
 
-    -- Run button
+    -- Run button with category color
     local runBtn = vgui.Create("lyx.TextButton2", panel)
     runBtn:SetPos(panel:GetWide() - lyx.ScaleW(120), lyx.Scale(40))
     runBtn:SetSize(lyx.ScaleW(100), lyx.Scale(35))
     runBtn:SetText("Run")
     runBtn:SetFont("GM3.Modules.Category")
-    runBtn:SetBackgroundColor(Color(68, 68, 68))
+    runBtn:SetBackgroundColor(Color(categoryColor.r * 0.6, categoryColor.g * 0.6, categoryColor.b * 0.6))
 
     runBtn.DoClick = function()
         surface.PlaySound("buttons/button15.wav")
