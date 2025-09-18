@@ -26,6 +26,7 @@ if SERVER then
             })
         end,
         "Environment" -- Category for tools affecting the game environment
+    )
     gm3:addTool(tool)
 end
 

@@ -89,6 +89,7 @@ if SERVER then
 
         end,
         "Utility" -- Category for general utility tools
+    )
     gm3:addTool(tool)
 end
 

@@ -41,6 +41,7 @@ if SERVER then
             net.Broadcast()
         end,
         "Communication" -- Category for tools affecting chat/communication
+    )
     gm3:addTool(tool)
 end
 

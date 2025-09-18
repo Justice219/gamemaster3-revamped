@@ -43,6 +43,7 @@ if SERVER then
             end)
         end,
         "Control" -- Category for tools affecting player control/movement
+    )
     gm3:addTool(tool)
 end
 

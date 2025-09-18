@@ -25,6 +25,7 @@ if SERVER then
             util.ScreenShake(Vector(0,0,0), magnitude, 5, duration, 9999999)
         end,
         "Visual" -- Category for tools affecting player vision/display
+    )
     gm3:addTool(tool)
 end
 
