@@ -10,29 +10,44 @@ do
     --[[
         Register the main GM3 menu command using LYX's secure command system
         Includes permission checking and proper error handling
+        Delayed to ensure GM3 systems are initialized
     ]]
-    lyx:ChatAddCommand("gm3", {
-        prefix = "!",
-        func = function(ply, args)
-            -- Security check to ensure player has permission
-            if not gm3:SecurityCheck(ply) then
-                ply:ChatPrint("You don't have permission to access GM3.")
-                return
-            end
+    timer.Simple(0.5, function()
+        local success = lyx:ChatAddCommand("gm3", {
+            prefix = "!",
+            func = function(ply, args)
+                -- Validate player
+                if not IsValid(ply) then
+                    return
+                end
 
-            -- Open the GM3 menu for the player
-            net.Start("gm3:menu:open")
-            net.Send(ply)
+                -- Security check to ensure player has permission
+                local hasAccess = gm3:SecurityCheck(ply)
+                if not hasAccess then
+                    ply:ChatPrint("You don't have permission to access GM3.")
+                    lyx.Logger:Log("Player " .. ply:Nick() .. " denied GM3 access - no permission")
+                    return
+                end
 
-            lyx.Logger:Log("Player " .. ply:Nick() .. " opened GM3 menu")
-        end,
-        description = "Open the Gamemaster 3 admin menu",
-        usage = "!gm3",
-        permission = function(ply)
-            return gm3:SecurityCheck(ply)
-        end,
-        cooldown = 1
-    })
+                -- Open the GM3 menu for the player
+                net.Start("gm3:menu:open")
+                net.Send(ply)
+
+                lyx.Logger:Log("Player " .. ply:Nick() .. " opened GM3 menu")
+            end,
+            description = "Open the Gamemaster 3 admin menu",
+            usage = "!gm3",
+            -- Remove the permission function that might be causing issues
+            -- Let the internal security check handle it
+            cooldown = 1
+        })
+
+        if success then
+            gm3.Logger:Log("GM3 command registered successfully")
+        else
+            gm3.Logger:Log("Failed to register GM3 command", 3)
+        end
+    end)
 end
 
 do

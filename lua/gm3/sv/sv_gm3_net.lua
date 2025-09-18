@@ -524,4 +524,25 @@ do
     lyx:NetAdd("gm3:command:run", {})  -- Command execution broadcast
     lyx:NetAdd("gm3:newHash", {})  -- Hash system updates
     lyx:NetAdd("gm3:removeHash", {})  -- Hash removal
+    lyx:NetAdd("gm3:setting:syncSetting", {})  -- Settings sync to client
+
+    --[[
+        Handle client settings request on connect
+    ]]
+    lyx:NetAdd("gm3:setting:requestClientSettings", {
+        func = function(ply, len)
+            -- Send all syncable settings to the client
+            for name, setting in pairs(gm3.settings) do
+                if setting.syncWithClient then
+                    net.Start("gm3:setting:syncSetting")
+                        net.WriteString(name)
+                        net.WriteType(setting.value)
+                    net.Send(ply)
+                end
+            end
+
+            gm3.Logger:Log("Synced settings to " .. ply:Nick())
+        end,
+        rateLimit = 2  -- Limit settings requests
+    })
 end
