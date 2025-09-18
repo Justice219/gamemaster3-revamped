@@ -230,7 +230,7 @@ function PANEL:CreatePlayerPanel(ply)
 
     -- Additional info on the right
     local pingLabel = vgui.Create("DLabel", panel)
-    pingLabel:SetPos(w - lyx.Scale(100), lyx.Scale(25))
+    pingLabel:SetPos(panel:GetWide() - lyx.Scale(100), lyx.Scale(25))
     pingLabel:SetFont("GM3.PlayerSelector.Info")
     pingLabel:SetText("Ping: " .. ply:Ping() .. "ms")
     pingLabel:SetTextColor(Color(180, 180, 180))
