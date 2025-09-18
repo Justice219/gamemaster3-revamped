@@ -53,6 +53,7 @@ if SERVER then
             end)
         end,
         "Visual" -- Category for tools affecting player vision/display
+    )
     gm3:addTool(tool)
 end
 
