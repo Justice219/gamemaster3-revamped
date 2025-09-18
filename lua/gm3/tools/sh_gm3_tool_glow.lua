@@ -17,9 +17,13 @@ if SERVER then
                 type = "number",
                 def = 5
             },
-            ["Color"] = {
-                type = "string",
-                def = "255,255,255"
+            ["Glow Color"] = {
+                type = "color",
+                def = Color(255, 255, 255) -- Default white
+            },
+            ["Random Color"] = {
+                type = "boolean",
+                def = false -- Use random color instead of selected
             },
         },
         function(ply, args)
@@ -32,13 +36,12 @@ if SERVER then
                 return
             end
 
-            // check if color is blank
-            local color = args["Color"]
-            if color == "" then
-                color = Color(math.random(0,255),math.random(0,255),math.random(0,255))
+            // Get the color - use random if specified
+            local color
+            if args["Random Color"] then
+                color = Color(math.random(0,255), math.random(0,255), math.random(0,255))
             else
-                local tbl = string.Explode(",", color)
-                color = Color(tonumber(tbl[1]),tonumber(tbl[2]),tonumber(tbl[3]))
+                color = args["Glow Color"] or Color(255, 255, 255)
             end
 
             // set player glow

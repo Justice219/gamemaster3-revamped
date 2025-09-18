@@ -427,6 +427,50 @@ function PANEL:CreateModulePanel(module, parent)
                 end
 
                 argY = argY + lyx.Scale(35)
+
+            elseif v.type == "color" then
+                -- Color selector button
+                local colorBtn = vgui.Create("lyx.TextButton2", panel)
+                colorBtn:SetPos(lyx.Scale(15), argY)
+                colorBtn:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
+                colorBtn:SetText("Select Color")
+                colorBtn:SetFont("GM3.Modules.Normal")
+
+                -- Store default color
+                local defaultColor = v.def or Color(100, 100, 100)
+                if type(v.def) == "string" then
+                    -- Parse string format "r,g,b"
+                    local parts = string.Explode(",", v.def)
+                    if #parts == 3 then
+                        defaultColor = Color(tonumber(parts[1]) or 100, tonumber(parts[2]) or 100, tonumber(parts[3]) or 100)
+                    end
+                end
+
+                args[k] = defaultColor
+                colorBtn:SetBackgroundColor(defaultColor)
+
+                -- Update button text with color values
+                colorBtn:SetText(string.format("RGB(%d, %d, %d)", defaultColor.r, defaultColor.g, defaultColor.b))
+
+                colorBtn.DoClick = function()
+                    local selector = vgui.Create("GM3.ColorSelector")
+                    selector:SetColor(args[k])
+                    selector.OnColorSelected = function(s, color)
+                        args[k] = color
+                        colorBtn:SetBackgroundColor(color)
+                        colorBtn:SetText(string.format("RGB(%d, %d, %d)", color.r, color.g, color.b))
+
+                        -- Ensure text is visible
+                        local brightness = (color.r * 0.299 + color.g * 0.587 + color.b * 0.114)
+                        if brightness < 128 then
+                            colorBtn:SetTextColor(Color(255, 255, 255))
+                        else
+                            colorBtn:SetTextColor(Color(0, 0, 0))
+                        end
+                    end
+                end
+
+                argY = argY + lyx.Scale(35)
             end
         end
     end

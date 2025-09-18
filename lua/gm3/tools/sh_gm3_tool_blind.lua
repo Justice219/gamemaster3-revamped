@@ -17,9 +17,9 @@ if SERVER then
                 type = "number",
                 def = 5
             },
-            ["Color"] = {
-                type = "string",
-                def = "255,255,255"
+            ["Blind Color"] = {
+                type = "color",
+                def = Color(255, 255, 255) -- Default white
             },
         },
         function(ply, args)
@@ -32,15 +32,8 @@ if SERVER then
                 return
             end
 
-            // check if color is blank
-            local color = args["Color"]
-            if color == "" then
-                // set to black if color is blank
-                color = Color(0,0,0)
-            else
-                local tbl = string.Explode(",", color)
-                color = Color(tonumber(tbl[1]),tonumber(tbl[2]),tonumber(tbl[3]))
-            end
+            // Get the color from args (it's already a Color object)
+            local color = args["Blind Color"] or Color(255, 255, 255)
 
             // fade the screen to the color
             target:ScreenFade(SCREENFADE.IN, color, 1, 0)
