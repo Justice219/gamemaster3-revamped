@@ -52,6 +52,97 @@ do
         return results
     end
 
+    local GM3_PatrolControllers = GM3_PatrolControllers or {}
+    local GM3_DefenseZones = GM3_DefenseZones or {}
+    local GM3_SupplyCrates = GM3_SupplyCrates or {}
+    local vector_origin = vector_origin or Vector(0, 0, 0)
+
+    local function GM3_CreateSmokeScreen(pos, radius, duration)
+        local effectData = EffectData()
+        effectData:SetOrigin(pos)
+        effectData:SetScale(math.Clamp(radius / 120, 0.5, 3))
+        util.Effect("smoke_explosion", effectData, true, true)
+
+        local smokestack = ents.Create("env_smokestack")
+        if not IsValid(smokestack) then return end
+        smokestack:SetPos(pos)
+        smokestack:SetKeyValue("InitialState", "1")
+        smokestack:SetKeyValue("SpreadSpeed", math.Clamp(radius, 40, 250))
+        smokestack:SetKeyValue("Speed", math.Clamp(radius, 40, 250))
+        smokestack:SetKeyValue("StartSize", math.Clamp(radius * 0.4, 48, 220))
+        smokestack:SetKeyValue("EndSize", math.Clamp(radius * 0.7, 96, 320))
+        smokestack:SetKeyValue("Rate", math.Clamp(radius * 2, 32, 500))
+        smokestack:SetKeyValue("JetLength", math.Clamp(radius * 0.7, 64, 256))
+        smokestack:SetKeyValue("WindAngle", "0")
+        smokestack:SetKeyValue("WindSpeed", "0")
+        smokestack:SetKeyValue("SmokeMaterial", "particle/particle_smokegrenade")
+        smokestack:SetKeyValue("rendercolor", "180 180 180")
+        smokestack:SetKeyValue("renderamt", "220")
+        smokestack:Spawn()
+        smokestack:Activate()
+        smokestack:Fire("TurnOn")
+
+        timer.Simple(duration or 12, function()
+            if IsValid(smokestack) then
+                smokestack:Fire("TurnOff")
+                smokestack:Remove()
+            end
+        end)
+    end
+
+    local FireSupportImpactConfig = {
+        precision = {
+            effect = "Explosion",
+            sound = "weapons/explode3.wav",
+            damage = 240,
+            radiusMul = 0.3,
+            scorch = true,
+            screenShake = 4
+        },
+        barrage = {
+            effect = "HelicopterMegaBomb",
+            sound = "ambient/explosions/explode_9.wav",
+            damage = 160,
+            radiusMul = 0.45,
+            scorch = true,
+            screenShake = 6
+        },
+        carpet = {
+            effect = "Explosion",
+            sound = "ambient/explosions/explode_6.wav",
+            damage = 130,
+            radiusMul = 0.6,
+            scorch = true,
+            sparks = true,
+            screenShake = 7
+        }
+    }
+
+    local function GM3_HandleArtilleryImpact(ply, pos, radius, profileName, isSmoke)
+        if isSmoke then
+            GM3_CreateSmokeScreen(pos, radius, 14)
+            sound.Play("weapons/smokegrenade/sg_explode.wav", pos, 90, 110)
+            return
+        end
+
+        local config = FireSupportImpactConfig[profileName] or FireSupportImpactConfig.barrage
+        local blastRadius = radius * (config.radiusMul or 0.4)
+        util.BlastDamage(ply, ply, pos, blastRadius, config.damage or 150)
+
+        local effect = EffectData()
+        effect:SetOrigin(pos)
+        util.Effect(config.effect or "Explosion", effect, true, true)
+        if config.sparks then
+            util.Effect("cball_explode", effect, true, true)
+        end
+
+        util.ScreenShake(pos, config.screenShake or 5, 5, 1.5, radius * 3)
+        if config.scorch then
+            util.Decal("Scorch", pos + Vector(0, 0, 12), pos - Vector(0, 0, 12))
+        end
+        sound.Play(config.sound or "ambient/explosions/explode_4.wav", pos, 120, 100)
+    end
+
     function gm3:RemoveFromTable(tbl, valueToRemove)
         PrintTable(tbl)
         local newTable = {}
@@ -887,6 +978,262 @@ do
         rateLimit = 5
     })
     --[[
+        Zeus Cam - Assign patrol routes
+    ]]
+    lyx:NetAdd("gm3ZeusCam_setPatrolRoute", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized patrol assignment by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(80)
+            local waypointCount = net.ReadUInt(6) or 0
+            if not entities or waypointCount < 1 or waypointCount > 8 then
+                ply:ChatPrint("Invalid patrol route.")
+                return
+            end
+
+            local waypoints = {}
+            for i = 1, waypointCount do
+                waypoints[i] = net.ReadVector()
+            end
+            local shouldLoop = net.ReadBool()
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    GM3_PatrolControllers[ent] = {
+                        waypoints = table.Copy(waypoints),
+                        idx = 1,
+                        loop = shouldLoop,
+                        lastCommand = 0
+                    }
+                end
+            end
+
+            ply:ChatPrint(string.format("Patrol assigned (%d nodes).", waypointCount))
+            lyx.Logger:Log("Zeus cam patrol route by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 4
+    })
+    --[[
+        Zeus Cam - Fire support / artillery
+    ]]
+    lyx:NetAdd("gm3ZeusCam_callArtillery", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized artillery call by " .. ply:Nick(), 2)
+                return
+            end
+
+            local position = net.ReadVector()
+            local radius = net.ReadUInt(12) or 0
+            local shells = net.ReadUInt(4) or 0
+            local delay = net.ReadFloat() or 0.5
+            local isSmoke = net.ReadBool()
+            local profileName = net.ReadString() or ""
+
+            if not isvector(position) then
+                ply:ChatPrint("Invalid strike position.")
+                return
+            end
+            radius = math.Clamp(radius, 50, 600)
+            shells = math.Clamp(shells, 1, 10)
+            delay = math.Clamp(delay, 0.2, 2)
+
+            for i = 1, shells do
+                local fireDelay = (i - 1) * delay
+                timer.Simple(fireDelay, function()
+                    if not IsValid(ply) then return end
+                    local offset = VectorRand():GetNormalized() * math.Rand(0, radius)
+                    offset.z = 0
+                    local impactPos = position + offset
+                    GM3_HandleArtilleryImpact(ply, impactPos, radius, profileName, isSmoke)
+                end)
+            end
+
+            lyx.Logger:Log("Zeus cam artillery call by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 3
+    })
+    --[[
+        Zeus Cam - Supply drops
+    ]]
+    lyx:NetAdd("gm3ZeusCam_supplyDrop", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized supply drop by " .. ply:Nick(), 2)
+                return
+            end
+
+            local pos = net.ReadVector()
+            local dropType = string.lower(string.Trim(net.ReadString() or "ammo"))
+            if not isvector(pos) then
+                ply:ChatPrint("Invalid drop position.")
+                return
+            end
+            if dropType ~= "ammo" and dropType ~= "medical" and dropType ~= "tech" then
+                dropType = "ammo"
+            end
+
+            local crate = ents.Create("prop_physics")
+            if not IsValid(crate) then return end
+
+            crate:SetModel("models/Items/item_item_crate.mdl")
+            crate:SetPos(pos + Vector(0, 0, 600))
+            crate:Spawn()
+            local phys = crate:GetPhysicsObject()
+            if IsValid(phys) then
+                phys:EnableMotion(true)
+                phys:SetVelocity(Vector(0, 0, -600))
+            end
+
+            crate.GM3Supply = {
+                type = dropType,
+                uses = 3,
+                owner = ply
+            }
+            table.insert(GM3_SupplyCrates, crate)
+            sound.Play("npc/combine_gunship/dropship_engine_distant_loop1.wav", crate:GetPos(), 80, 120)
+            ply:ChatPrint("Supply crate inbound.")
+            lyx.Logger:Log("Zeus cam supply drop (" .. dropType .. ") by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 3
+    })
+    --[[
+        Zeus Cam - Defense zones
+    ]]
+    lyx:NetAdd("gm3ZeusCam_createDefenseZone", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized defense zone by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(80)
+            local center = net.ReadVector()
+            local radius = net.ReadUInt(12) or 0
+            local posture = string.lower(net.ReadString() or "defensive")
+
+            if not entities or not isvector(center) then
+                ply:ChatPrint("Invalid defense zone.")
+                return
+            end
+
+            radius = math.Clamp(radius, 150, 2000)
+            local zone = {
+                owner = ply,
+                center = center,
+                radius = radius,
+                posture = posture,
+                npcs = {}
+            }
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    table.insert(zone.npcs, ent)
+                    if ent.SetLastPosition then
+                        ent:SetLastPosition(center)
+                    end
+                    if ent.SetSchedule then
+                        ent:SetSchedule(SCHED_FORCED_GO)
+                    end
+                end
+            end
+
+            if #zone.npcs == 0 then
+                ply:ChatPrint("No valid NPCs selected.")
+                return
+            end
+
+            table.insert(GM3_DefenseZones, zone)
+            lyx.Logger:Log("Zeus cam defense zone by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Recon pulse
+    ]]
+    lyx:NetAdd("gm3ZeusCam_reconPulse", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized recon pulse by " .. ply:Nick(), 2)
+                return
+            end
+
+            local origin = net.ReadVector()
+            local radius = net.ReadUInt(12) or 0
+            if not isvector(origin) then
+                ply:ChatPrint("Invalid recon position.")
+                return
+            end
+            radius = math.Clamp(radius, 200, 2000)
+
+            local contacts = {}
+            for _, ent in ipairs(ents.FindInSphere(origin, radius)) do
+                if not IsValid(ent) then continue end
+                if ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot() then
+                    local velocity = ent.GetVelocity and ent:GetVelocity() or vector_origin
+                    local dir = velocity:GetNormalized()
+                    if dir.x ~= dir.x or dir.y ~= dir.y or dir.z ~= dir.z then
+                        dir = vector_origin
+                    end
+                    local friendly = false
+                    if ent:IsPlayer() and ply:IsPlayer() and ent.Team and ply.Team then
+                        friendly = ent:Team() == ply:Team()
+                    elseif ent:IsNPC() and ent.Disposition then
+                        friendly = ent:Disposition(ply) ~= D_HT
+                    end
+                    local entry = {
+                        pos = ent:WorldSpaceCenter(),
+                        type = ent:IsPlayer() and "player" or "npc",
+                        class = ent:GetClass(),
+                        label = ent:IsPlayer() and ent:Nick() or ent:GetClass(),
+                        dir = dir,
+                        speed = velocity:Length(),
+                        friendly = friendly
+                    }
+                    table.insert(contacts, entry)
+                elseif ent:GetClass() == "prop_physics" then
+                    table.insert(contacts, {
+                        pos = ent:WorldSpaceCenter(),
+                        type = "prop",
+                        class = ent:GetClass(),
+                        label = "Prop",
+                        dir = vector_origin,
+                        speed = 0,
+                        friendly = false
+                    })
+                end
+                if #contacts >= 32 then break end
+            end
+
+            net.Start("gm3ZeusCam_reconData")
+                net.WriteVector(origin)
+                net.WriteUInt(radius, 12)
+                net.WriteUInt(#contacts, 8)
+                for _, contact in ipairs(contacts) do
+                    net.WriteVector(contact.pos)
+                    net.WriteString(contact.type or "")
+                    net.WriteString(contact.class or "")
+                    net.WriteString(contact.label or "")
+                    net.WriteVector(contact.dir or vector_origin)
+                    net.WriteFloat(contact.speed or 0)
+                    net.WriteBool(contact.friendly or false)
+                end
+            net.Send(ply)
+
+            ply:ChatPrint(string.format("Recon pulse sent (%d contacts).", #contacts))
+            lyx.Logger:Log("Zeus cam recon pulse by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 3
+    })
+    --[[
         Zeus Cam - Spawn NPCs at cursor
     ]]
     lyx:NetAdd("gm3ZeusCam_spawnNPCs", {
@@ -985,6 +1332,152 @@ do
         rateLimit = 5
     })
 
+    hook.Add("Think", "GM3_ZeusPatrolThink", function()
+        local now = CurTime()
+        for ent, data in pairs(GM3_PatrolControllers) do
+            if not IsValid(ent) or not data or not data.waypoints or #data.waypoints == 0 then
+                GM3_PatrolControllers[ent] = nil
+            else
+                data.idx = math.Clamp(data.idx or 1, 1, #data.waypoints)
+                local target = data.waypoints[data.idx]
+                if not target then
+                    GM3_PatrolControllers[ent] = nil
+                else
+                    local dist = ent:GetPos():DistToSqr(target)
+                    local keepTracking = true
+                    if dist < 3600 then
+                        if not data.wait or now >= data.wait then
+                            data.idx = data.idx + 1
+                            if data.idx > #data.waypoints then
+                                if data.loop then
+                                    data.idx = 1
+                                else
+                                    GM3_PatrolControllers[ent] = nil
+                                    keepTracking = false
+                                end
+                            end
+                            if keepTracking then
+                                data.wait = now + 0.8
+                            end
+                        end
+                    elseif now > (data.lastCommand or 0) + 0.5 then
+                        if ent.SetLastPosition then
+                            ent:SetLastPosition(target)
+                        end
+                        if ent.SetSchedule then
+                            ent:SetSchedule(SCHED_FORCED_GO)
+                        end
+                        data.lastCommand = now
+                    end
+                end
+            end
+        end
+    end)
+
+    local function GetDefenseTargets(zone)
+        local best
+        local targets = ents.FindInSphere(zone.center, zone.radius)
+        for _, ent in ipairs(targets) do
+            if not IsValid(ent) then continue end
+            if ent:IsPlayer() and ent ~= zone.owner then
+                return ent
+            elseif ent:IsNPC() or ent:IsNextBot() then
+                best = ent
+            end
+        end
+        return best
+    end
+
+    hook.Add("Think", "GM3_ZeusDefenseThink", function()
+        for idx = #GM3_DefenseZones, 1, -1 do
+            local zone = GM3_DefenseZones[idx]
+            if not zone or not zone.npcs then
+                table.remove(GM3_DefenseZones, idx)
+            else
+                for entIdx = #zone.npcs, 1, -1 do
+                    local npc = zone.npcs[entIdx]
+                    if not IsValid(npc) then
+                        table.remove(zone.npcs, entIdx)
+                    else
+                        local dist = npc:GetPos():DistToSqr(zone.center)
+                        if dist > zone.radius * zone.radius then
+                            if npc.SetLastPosition then npc:SetLastPosition(zone.center) end
+                            if npc.SetSchedule then npc:SetSchedule(SCHED_FORCED_GO) end
+                        elseif zone.posture == "aggressive" then
+                            local target = GetDefenseTargets(zone)
+                            if IsValid(target) and npc.SetEnemy then
+                                npc:SetEnemy(target)
+                                if npc.UpdateEnemyMemory then
+                                    npc:UpdateEnemyMemory(target, target:GetPos())
+                                end
+                                if npc.SetSchedule then
+                                    npc:SetSchedule(SCHED_CHASE_ENEMY)
+                                end
+                            end
+                        end
+                    end
+                end
+                if #zone.npcs == 0 then
+                    table.remove(GM3_DefenseZones, idx)
+                end
+            end
+        end
+    end)
+
+    hook.Add("PlayerUse", "GM3_ZeusSupplyUse", function(ply, ent)
+        if not IsValid(ply) or not IsValid(ent) then return end
+        local supply = ent.GM3Supply
+        if not supply then return end
+
+        local dropType = supply.type or "ammo"
+        if dropType == "ammo" then
+            ply:GiveAmmo(60, "SMG1", true)
+            ply:GiveAmmo(30, "AR2", true)
+        elseif dropType == "medical" then
+            local newHealth = math.min(ply:GetMaxHealth(), ply:Health() + 60)
+            ply:SetHealth(newHealth)
+            ply:SetArmor(math.min(100, ply:Armor() + 40))
+        elseif dropType == "tech" then
+            ply:Give("weapon_frag")
+            ply:Give("weapon_slam")
+        end
+
+        supply.uses = (supply.uses or 1) - 1
+        ent:EmitSound("items/ammo_pickup.wav")
+        if supply.uses <= 0 then
+            ent:EmitSound("ambient/materials/door_hit1.wav")
+            ent:Remove()
+        end
+        return false
+    end)
+
+    hook.Add("EntityRemoved", "GM3_ZeusCleanup", function(ent)
+        if GM3_PatrolControllers then
+            GM3_PatrolControllers[ent] = nil
+        end
+        if GM3_SupplyCrates then
+            for i = #GM3_SupplyCrates, 1, -1 do
+                if GM3_SupplyCrates[i] == ent then
+                    table.remove(GM3_SupplyCrates, i)
+                    break
+                end
+            end
+        end
+        for i = #GM3_DefenseZones, 1, -1 do
+            local zone = GM3_DefenseZones[i]
+            if zone then
+                for idx = #zone.npcs, 1, -1 do
+                    if zone.npcs[idx] == ent then
+                        table.remove(zone.npcs, idx)
+                    end
+                end
+                if #zone.npcs == 0 then
+                    table.remove(GM3_DefenseZones, i)
+                end
+            end
+        end
+    end)
+
     --[[
         Client-bound network messages
         These are sent from server to client and don't need server handlers
@@ -1003,6 +1496,7 @@ do
     lyx:NetAdd("gm3:tools:opsatRemove", {})  -- Remove OPSAT display
     lyx:NetAdd("gm3:tools:opsatSet", {})  -- Set OPSAT display
     lyx:NetAdd("gm3:tools:requestOpsat", {})  -- Request OPSAT data on join
+    lyx:NetAdd("gm3ZeusCam_reconData", {})
 
     --[[
         Handle client settings request on connect

@@ -50,6 +50,72 @@ local gm3_rightMouseHeld = false
 local gm3CamPanel = nil
 local gm3_zeusAllowed = false
 local gm3_selectionGroups = gm3_selectionGroups or {}
+local gm3_waypointMode = false
+local gm3_waypoints = gm3_waypoints or {}
+local gm3_waypointLoop = true
+local gm3_nextWaypointClick = 0
+local gm3_waypointPreviewPos = nil
+local gm3_waypointClearHeld = false
+local gm3_reconPings = gm3_reconPings or {}
+local gm3_lastReconRequest = 0
+local gm3_routeVisuals = gm3_routeVisuals or {}
+local vector_origin = vector_origin or Vector(0, 0, 0)
+
+local gm3_fireSupportProfiles = {
+    precision = {
+        label = "Precision Strike",
+        radius = 120,
+        shells = 1,
+        delay = 0.35
+    },
+    barrage = {
+        label = "Heavy Barrage",
+        radius = 260,
+        shells = 5,
+        delay = 0.7
+    },
+    carpet = {
+        label = "Carpet Bomb",
+        radius = 420,
+        shells = 8,
+        delay = 1.1
+    },
+    smoke = {
+        label = "Smoke Screen",
+        radius = 200,
+        shells = 4,
+        delay = 0.5,
+        smoke = true
+    }
+}
+
+local gm3_reconColors = {
+    player = Color(90, 200, 255),
+    npc = Color(255, 180, 80),
+    prop = Color(200, 200, 200),
+    unknown = Color(180, 180, 255),
+    friendly = Color(140, 255, 160)
+}
+
+local gm3_routeColors = {
+    move = Color(90, 200, 255),
+    formation = Color(255, 180, 80),
+    patrol = Color(90, 220, 150),
+    default = Color(255, 255, 255)
+}
+
+local gm3_beamMaterial = gm3_beamMaterial or Material("cable/new_cable_lit")
+
+local function DrawThickBeam(startPos, endPos, width, color)
+    if not startPos or not endPos then return end
+    render.SetMaterial(gm3_beamMaterial)
+    render.DrawBeam(startPos, endPos, width or 4, 0, 1, color)
+    render.SetColorMaterial()
+end
+
+local function ClearRouteVisuals()
+    table.Empty(gm3_routeVisuals)
+end
 
 surface.CreateFont("GM3_Cam_Subtitle", {
     font = "Roboto",
@@ -515,8 +581,208 @@ function gm3ZeusCam:LoadSelectionGroup(slot)
     notification.AddLegacy("Loaded selection group #" .. slot, NOTIFY_GENERIC, 2)
 end
 
+local function ClearWaypoints()
+    table.Empty(gm3_waypoints)
+end
+
+local function UpdateRouteVisualProgress()
+    local now = CurTime()
+    for ent, data in pairs(gm3_routeVisuals) do
+        if not IsValid(ent) or not istable(data) or not istable(data.nodes) or #data.nodes == 0 then
+            gm3_routeVisuals[ent] = nil
+        else
+            data.currentIndex = math.Clamp(data.currentIndex or 1, 1, #data.nodes)
+            local target = data.nodes[data.currentIndex]
+            if target and ent:GetPos():DistToSqr(target) < (data.threshold or 6400) then
+                data.currentIndex = data.currentIndex + 1
+                if data.currentIndex > #data.nodes then
+                    if data.loop then
+                        data.currentIndex = 1
+                    else
+                        gm3_routeVisuals[ent] = nil
+                    end
+                end
+            end
+            if data.expires and data.expires < now then
+                gm3_routeVisuals[ent] = nil
+            end
+        end
+    end
+end
+
+function gm3ZeusCam:CreateRouteVisualFor(selection, baseData, perEntityNodes)
+    baseData = baseData or {}
+    for _, ent in ipairs(selection or {}) do
+        if IsValid(ent) then
+            local route = table.Copy(baseData)
+            local nodes = perEntityNodes and perEntityNodes[ent]
+            nodes = nodes or baseData.nodes
+            if nodes and #nodes > 0 then
+                route.nodes = table.Copy(nodes)
+                route.loop = baseData.loop or false
+                route.currentIndex = 1
+                route.routeType = baseData.routeType or "move"
+                route.color = baseData.color or gm3_routeColors[route.routeType] or GetSelectionColor(ent) or gm3_routeColors.default
+                route.thickness = baseData.thickness or 4
+                route.threshold = baseData.threshold or 6400
+                route.label = baseData.label or string.upper(string.sub(route.routeType, 1, 1)) .. string.sub(route.routeType, 2)
+                route.expires = baseData.persistent == false and (CurTime() + 6) or nil
+                gm3_routeVisuals[ent] = route
+            end
+        end
+    end
+end
+
+function gm3ZeusCam:SetWaypointMode(state)
+    state = state and true or false
+    if state and not SelectionHasNPCs() then
+        notification.AddLegacy("Select NPCs before entering waypoint mode.", NOTIFY_HINT, 2)
+        return
+    end
+    if state then
+        gm3_spawnMode = false
+        self:SetSpawnMode(false)
+        ClearWaypoints()
+        gm3_waypointPreviewPos = nil
+    end
+    if not state then
+        ClearWaypoints()
+        gm3_waypointPreviewPos = nil
+    end
+    gm3_waypointMode = state
+    if IsValid(self.WaypointModeButton) then
+        self.WaypointModeButton:SetText(state and "Waypoint Mode (ON)" or "Waypoint Mode (OFF)")
+        self.WaypointModeButton:SetBackgroundColor(state and Color(30, 160, 210) or Color(90, 90, 90))
+    end
+end
+
+function gm3ZeusCam:RefreshWaypointLoopButton()
+    if IsValid(self.WaypointLoopButton) then
+        self.WaypointLoopButton:SetText(gm3_waypointLoop and "Loop Patrol (ON)" or "Loop Patrol (OFF)")
+        self.WaypointLoopButton:SetBackgroundColor(gm3_waypointLoop and Color(50, 160, 80) or Color(120, 60, 60))
+    end
+end
+
+function gm3ZeusCam:ToggleWaypointLoop(forceState)
+    if forceState ~= nil then
+        gm3_waypointLoop = forceState and true or false
+    else
+        gm3_waypointLoop = not gm3_waypointLoop
+    end
+    self:RefreshWaypointLoopButton()
+end
+
+function gm3ZeusCam:AddWaypoint(pos)
+    if not gm3_waypointMode then return end
+    if #gm3_waypoints >= 8 then
+        notification.AddLegacy("Waypoint limit reached (8).", NOTIFY_HINT, 2)
+        return
+    end
+    gm3_waypoints[#gm3_waypoints + 1] = pos
+    surface.PlaySound("buttons/lightswitch2.wav")
+end
+
+function gm3ZeusCam:CommitWaypoints()
+    if not gm3_waypointMode then return end
+    if not SelectionHasNPCs() then
+        notification.AddLegacy("Waypoint mode requires NPC selection.", NOTIFY_HINT, 2)
+        self:SetWaypointMode(false)
+        return
+    end
+    if #gm3_waypoints == 0 then
+        notification.AddLegacy("Add waypoints with LMB before finalizing.", NOTIFY_HINT, 2)
+        return
+    end
+
+    local finalTarget = gm3_waypoints[#gm3_waypoints]
+    local selection = self:SendSelectionCommand("gm3ZeusCam_setPatrolRoute", nil, function()
+        net.WriteUInt(#gm3_waypoints, 6)
+        for _, waypoint in ipairs(gm3_waypoints) do
+            net.WriteVector(waypoint)
+        end
+        net.WriteBool(gm3_waypointLoop)
+    end)
+
+    if selection then
+        self:TrackMoveOrders(finalTarget, selection)
+        notification.AddLegacy("Issued patrol route to " .. tostring(#selection) .. " units.", NOTIFY_GENERIC, 3)
+        self:CreateRouteVisualFor(selection, {
+            routeType = "patrol",
+            nodes = table.Copy(gm3_waypoints),
+            loop = gm3_waypointLoop,
+            label = gm3_waypointLoop and "Patrol Loop" or "Patrol",
+            thickness = 5,
+            persistent = true,
+            threshold = 9000
+        })
+    end
+
+    self:SetWaypointMode(false)
+end
+
+function gm3ZeusCam:CancelWaypoints(silent)
+    if #gm3_waypoints > 0 and not silent then
+        notification.AddLegacy("Cleared staged waypoints.", NOTIFY_HINT, 2)
+    end
+    ClearWaypoints()
+    gm3_waypointPreviewPos = nil
+end
+
+function gm3ZeusCam:HandleWaypointInput()
+    if not SelectionHasNPCs() then
+        self:SetWaypointMode(false)
+        notification.AddLegacy("Waypoint mode cancelled: no NPCs selected.", NOTIFY_HINT, 2)
+        return
+    end
+    local tr = self:GetCursorTrace()
+    gm3_waypointPreviewPos = tr.Hit and tr.HitPos or nil
+
+    if input.IsMouseDown(MOUSE_LEFT) and CurTime() > gm3_nextWaypointClick then
+        gm3_nextWaypointClick = CurTime() + 0.2
+        if tr.Hit then
+            self:AddWaypoint(tr.HitPos + Vector(0, 0, 2))
+        else
+            notification.AddLegacy("Waypoint must be placed on valid geometry.", NOTIFY_HINT, 2)
+        end
+    elseif not input.IsMouseDown(MOUSE_LEFT) then
+        gm3_nextWaypointClick = math.max(gm3_nextWaypointClick - FrameTime(), 0)
+    end
+
+    if input.IsMouseDown(MOUSE_RIGHT) then
+        gm3_rightMouseHeld = true
+    elseif gm3_rightMouseHeld then
+        gm3_rightMouseHeld = false
+        if #gm3_waypoints > 0 then
+            self:CommitWaypoints()
+        else
+            self:SetWaypointMode(false)
+        end
+        return true
+    end
+
+    if input.IsKeyDown(KEY_BACKSPACE) then
+        if not gm3_waypointClearHeld and #gm3_waypoints > 0 then
+            table.remove(gm3_waypoints)
+            notification.AddLegacy("Removed last waypoint.", NOTIFY_HINT, 1)
+        end
+        gm3_waypointClearHeld = true
+        return
+    elseif input.IsKeyDown(KEY_DELETE) then
+        if not gm3_waypointClearHeld and #gm3_waypoints > 0 then
+            self:CancelWaypoints()
+        end
+        gm3_waypointClearHeld = true
+        return
+    else
+        gm3_waypointClearHeld = false
+    end
+end
+
 function gm3ZeusCam:SetSpawnMode(state)
     gm3_spawnMode = state and true or false
+    if gm3_spawnMode then
+        self:SetWaypointMode(false)
+    end
     if IsValid(self.SpawnModeButton) then
         self.SpawnModeButton:SetText(gm3_spawnMode and "Spawn Mode (ON)" or "Spawn Mode (OFF)")
         self.SpawnModeButton:SetBackgroundColor(gm3_spawnMode and Color(30, 160, 110) or Color(90, 90, 90))
@@ -529,8 +795,8 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
     end
 
     local panel = vgui.Create("DPanel", parent)
-    panel:SetSize(lyx.ScaleW(320), lyx.Scale(380))
-    panel:SetPos(ScrW() - lyx.ScaleW(340), lyx.Scale(80))
+    panel:SetSize(lyx.ScaleW(320), lyx.Scale(520))
+    panel:SetPos(ScrW() - lyx.ScaleW(340), lyx.Scale(120))
     panel.Paint = function(s, w, h)
         surface.SetDrawColor(gm3_spawnMode and Color(20, 80, 60, 230) or Color(30, 30, 30, 220))
         surface.DrawRect(0, 0, w, h)
@@ -589,7 +855,7 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         PopulateNPCCombo(value)
     end
 
-    npcCombo.OnSelect = function(_, _, entry)
+    npcCombo.OnSelect = function(_, _, _, entry)
         if not entry or self._refreshingSpawn then return end
         gm3_spawnConfig.class = entry.class
         local weapons = entry.data and entry.data.Weapons
@@ -682,24 +948,44 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
     local presetPanel = vgui.Create("DPanel", panel)
     presetPanel:Dock(TOP)
     presetPanel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(6))
-    presetPanel:SetTall(lyx.Scale(150))
+    presetPanel:SetTall(lyx.Scale(190))
     presetPanel.Paint = nil
 
     local presetButtons = {}
     for slot = 1, 5 do
-        local btn = vgui.Create("lyx.TextButton2", presetPanel)
-        btn:Dock(TOP)
-        btn:DockMargin(0, 0, 0, lyx.Scale(4))
-        btn:SetTall(lyx.Scale(26))
+        local row = vgui.Create("DPanel", presetPanel)
+        row:Dock(TOP)
+        row:DockMargin(0, 0, 0, lyx.Scale(4))
+        row:SetTall(lyx.Scale(26))
+        row.Paint = nil
+
+        local btn = vgui.Create("lyx.TextButton2", row)
+        btn:Dock(FILL)
         btn:SetText("Slot " .. slot .. ": empty")
         btn.DoClick = function()
-            if input.IsShiftDown() or not gm3_spawnPresets[slot] then
-                gm3ZeusCam:SaveSpawnPreset(slot)
-            else
-                gm3ZeusCam:LoadSpawnPreset(slot)
-            end
+            gm3ZeusCam:LoadSpawnPreset(slot)
         end
         presetButtons[slot] = btn
+
+        local reset = vgui.Create("lyx.TextButton2", row)
+        reset:Dock(RIGHT)
+        reset:DockMargin(lyx.Scale(4), 0, 0, 0)
+        reset:SetWide(lyx.Scale(40))
+        reset:SetText("✕")
+        reset.DoClick = function()
+            gm3_spawnPresets[slot] = nil
+            gm3ZeusCam:RefreshSpawnControls()
+            notification.AddLegacy("Cleared spawn preset #" .. slot, NOTIFY_GENERIC, 2)
+        end
+        reset:SetBackgroundColor(Color(150, 50, 50))
+
+        local save = vgui.Create("lyx.TextButton2", row)
+        save:Dock(RIGHT)
+        save:SetWide(lyx.Scale(60))
+        save:SetText("Save")
+        save.DoClick = function()
+            gm3ZeusCam:SaveSpawnPreset(slot)
+        end
     end
 
     local toggle = vgui.Create("lyx.TextButton2", panel)
@@ -724,6 +1010,8 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         populateNPCCombo = PopulateNPCCombo
     }
     self:SetSpawnMode(false)
+    self:SetWaypointMode(false)
+    self:RefreshWaypointLoopButton()
     self:RefreshSpawnControls()
 end
 
@@ -753,6 +1041,83 @@ function gm3ZeusCam:SpawnAtCursor()
     end)
 end
 
+function gm3ZeusCam:CallFireSupport(profileKey)
+    local profile = gm3_fireSupportProfiles[profileKey]
+    if not profile then return end
+    local tr = self:GetCursorTrace()
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before calling fire support.", NOTIFY_ERROR, 2)
+        return
+    end
+
+    lyx:NetSend("gm3ZeusCam_callArtillery", function()
+        net.WriteVector(tr.HitPos)
+        net.WriteUInt(math.Clamp(profile.radius, 50, 1023), 12)
+        net.WriteUInt(math.Clamp(profile.shells, 1, 12), 4)
+        net.WriteFloat(math.Clamp(profile.delay or 0.5, 0.1, 3))
+        net.WriteBool(profile.smoke and true or false)
+        net.WriteString(profileKey or "")
+    end)
+
+    notification.AddLegacy("Fire support inbound: " .. profile.label, NOTIFY_GENERIC, 3)
+end
+
+function gm3ZeusCam:RequestSupplyDrop(dropType)
+    dropType = dropType or "ammo"
+    local tr = self:GetCursorTrace()
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before requesting a drop.", NOTIFY_ERROR, 2)
+        return
+    end
+
+    lyx:NetSend("gm3ZeusCam_supplyDrop", function()
+        net.WriteVector(tr.HitPos)
+        net.WriteString(dropType)
+    end)
+    notification.AddLegacy(string.upper(string.sub(dropType, 1, 1)) .. string.sub(dropType, 2) .. " drop inbound.", NOTIFY_GENERIC, 3)
+end
+
+function gm3ZeusCam:CreateDefenseZone(radius, posture)
+    if not SelectionHasNPCs() then
+        notification.AddLegacy("Select NPCs to assign a defense zone.", NOTIFY_HINT, 2)
+        return
+    end
+    local tr = self:GetCursorTrace()
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before defining a zone.", NOTIFY_ERROR, 2)
+        return
+    end
+    posture = posture or "defensive"
+    radius = math.Clamp(math.floor(radius or 300), 100, 2000)
+
+    self:SendSelectionCommand("gm3ZeusCam_createDefenseZone", tr.HitPos, function()
+        net.WriteUInt(radius, 12)
+        net.WriteString(posture)
+    end)
+    notification.AddLegacy("Defense zone established (" .. posture .. ")", NOTIFY_GENERIC, 3)
+end
+
+function gm3ZeusCam:RequestReconPulse(radius)
+    local now = CurTime()
+    if now < gm3_lastReconRequest then
+        notification.AddLegacy("Recon systems recharging...", NOTIFY_HINT, 2)
+        return
+    end
+    radius = math.Clamp(math.floor(radius or 500), 100, 2000)
+    local tr = self:GetCursorTrace()
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before pinging recon.", NOTIFY_ERROR, 2)
+        return
+    end
+
+    gm3_lastReconRequest = now + 5
+    lyx:NetSend("gm3ZeusCam_reconPulse", function()
+        net.WriteVector(tr.HitPos)
+        net.WriteUInt(radius, 12)
+    end)
+    notification.AddLegacy("Recon pulse launched (" .. radius .. " units).", NOTIFY_HINT, 2)
+end
+
 function gm3ZeusCam:SendFormationCommand(name)
     if not SelectionHasNPCs() then
         notification.AddLegacy("Select NPCs to use formations.", NOTIFY_HINT, 2)
@@ -768,9 +1133,13 @@ function gm3ZeusCam:SendFormationCommand(name)
     local selection = GetSelectionList()
     local offsets = formation(#selection, gm3_formationSpacing)
     local targetPositions = {}
+    local perEntityNodes = {}
     for i, ent in ipairs(selection) do
         local offset = offsets[i] or offsets[#offsets]
         targetPositions[i] = tr.HitPos + offset
+        if IsValid(ent) then
+            perEntityNodes[ent] = {tr.HitPos + offset}
+        end
     end
 
     lyx:NetSend("gm3ZeusCam_moveFormation", function()
@@ -782,6 +1151,12 @@ function gm3ZeusCam:SendFormationCommand(name)
     end)
 
     self:TrackMoveOrders(tr.HitPos, selection)
+    self:CreateRouteVisualFor(selection, {
+        routeType = "formation",
+        label = "Formation",
+        thickness = 5,
+        persistent = true
+    }, perEntityNodes)
 end
 
 function gm3ZeusCam:FinalizeSelectionBox()
@@ -890,6 +1265,18 @@ function gm3ZeusCam:OpenContextMenu()
             behaviorMenu:AddOption("Aggressive", function()
                 self:SetNPCState("aggressive")
             end):SetIcon("icon16/exclamation.png")
+
+            local areaMenu, areaOption = menu:AddSubMenu("Area Control")
+            areaOption:SetIcon("icon16/shape_handles.png")
+            areaMenu:AddOption("Defense Zone · Small", function()
+                self:CreateDefenseZone(300, "defensive")
+            end):SetIcon("icon16/shield.png")
+            areaMenu:AddOption("Defense Zone · Large", function()
+                self:CreateDefenseZone(600, "aggressive")
+            end):SetIcon("icon16/shield_add.png")
+            areaMenu:AddOption("Begin Waypoint Mode", function()
+                self:SetWaypointMode(true)
+            end):SetIcon("icon16/map_edit.png")
         end
 
         if hasPlayers then
@@ -946,6 +1333,35 @@ function gm3ZeusCam:OpenContextMenu()
         self:ShockwaveAtCursor()
     end):SetIcon("icon16/lightning.png")
 
+    local fireMenu, fireOption = menu:AddSubMenu("Fire Support")
+    fireOption:SetIcon("icon16/bomb.png")
+    for key, profile in pairs(gm3_fireSupportProfiles) do
+        fireMenu:AddOption(profile.label, function()
+            self:CallFireSupport(key)
+        end):SetIcon("icon16/arrow_down.png")
+    end
+
+    local logisticsMenu, logOption = menu:AddSubMenu("Logistics")
+    logOption:SetIcon("icon16/box.png")
+    logisticsMenu:AddOption("Ammo Drop", function()
+        self:RequestSupplyDrop("ammo")
+    end):SetIcon("icon16/box.png")
+    logisticsMenu:AddOption("Medical Drop", function()
+        self:RequestSupplyDrop("medical")
+    end):SetIcon("icon16/medkit.png")
+    logisticsMenu:AddOption("Technology Drop", function()
+        self:RequestSupplyDrop("tech")
+    end):SetIcon("icon16/wrench.png")
+
+    local intelMenu, intelOption = menu:AddSubMenu("Recon Tools")
+    intelOption:SetIcon("icon16/radar.png")
+    intelMenu:AddOption("Recon Pulse (Short)", function()
+        self:RequestReconPulse(400)
+    end):SetIcon("icon16/eye.png")
+    intelMenu:AddOption("Recon Pulse (Long)", function()
+        self:RequestReconPulse(800)
+    end):SetIcon("icon16/eye.png")
+
     menu:AddOption("Clear Selection", function()
         ClearSelection()
     end):SetIcon("icon16/cancel.png")
@@ -989,6 +1405,13 @@ function gm3ZeusCam:SendNPCsToCamera()
     local selection = self:SendSelectionCommand("gm3ZeusCam_moveToCamera", CamPos)
     if selection then
         self:TrackMoveOrders(CamPos, selection)
+        self:CreateRouteVisualFor(selection, {
+            routeType = "move",
+            nodes = {CamPos},
+            label = "Camera",
+            thickness = 5,
+            persistent = true
+        })
     end
 end
 
@@ -1005,6 +1428,13 @@ function gm3ZeusCam:SendNPCsToCursor()
     local selection = self:SendSelectionCommand("gm3ZeusCam_moveToClick", tr.HitPos)
     if selection then
         self:TrackMoveOrders(tr.HitPos, selection)
+        self:CreateRouteVisualFor(selection, {
+            routeType = "move",
+            nodes = {tr.HitPos},
+            label = "Cursor",
+            thickness = 5,
+            persistent = true
+        })
     end
 end
 
@@ -1016,6 +1446,12 @@ function gm3ZeusCam:SendPlayersToCamera()
     local selection = self:SendSelectionCommand("gm3ZeusCam_playersToCamera", CamPos)
     if selection then
         self:TrackMoveOrders(CamPos, selection)
+        self:CreateRouteVisualFor(selection, {
+            routeType = "move",
+            nodes = {CamPos},
+            label = "Camera",
+            persistent = true
+        })
     end
 end
 
@@ -1032,6 +1468,12 @@ function gm3ZeusCam:SendPlayersToCursor()
     local selection = self:SendSelectionCommand("gm3ZeusCam_playersToCursor", tr.HitPos)
     if selection then
         self:TrackMoveOrders(tr.HitPos, selection)
+        self:CreateRouteVisualFor(selection, {
+            routeType = "move",
+            nodes = {tr.HitPos},
+            label = "Cursor",
+            persistent = true
+        })
     end
 end
 
@@ -1176,6 +1618,44 @@ function gm3ZeusCam:CreateCamPanel(bool)
         moveToClick:SetBackgroundColor(Color(139,36,139))
         moveToClick.DoClick = function()
             gm3ZeusCam:SendNPCsToCursor()
+        end
+
+        local waypointToggle = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
+        waypointToggle:Dock(RIGHT)
+        waypointToggle:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
+        waypointToggle:SetText("Waypoint Mode (OFF)")
+        waypointToggle:SetWide(lyx.Scale(150))
+        waypointToggle:SetBackgroundColor(Color(90, 90, 90))
+        waypointToggle.DoClick = function()
+            gm3ZeusCam:SetWaypointMode(not gm3_waypointMode)
+        end
+        self.WaypointModeButton = waypointToggle
+
+        local loopToggle = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
+        loopToggle:Dock(RIGHT)
+        loopToggle:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
+        loopToggle:SetText("Loop Patrol (ON)")
+        loopToggle:SetWide(lyx.Scale(150))
+        loopToggle:SetBackgroundColor(Color(50, 160, 80))
+        loopToggle.DoClick = function()
+            gm3ZeusCam:ToggleWaypointLoop()
+        end
+        self.WaypointLoopButton = loopToggle
+
+        local fireSupportBtn = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
+        fireSupportBtn:Dock(RIGHT)
+        fireSupportBtn:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
+        fireSupportBtn:SetText("Fire Support")
+        fireSupportBtn:SetWide(lyx.Scale(150))
+        fireSupportBtn:SetBackgroundColor(Color(200, 120, 40))
+        fireSupportBtn.DoClick = function()
+            local quickMenu = DermaMenu()
+            for key, profile in pairs(gm3_fireSupportProfiles) do
+                quickMenu:AddOption(profile.label, function()
+                    gm3ZeusCam:CallFireSupport(key)
+                end)
+            end
+            quickMenu:Open()
         end
 
         gm3ZeusCam:CreateSpawnToolbar(gm3CamPanel)
@@ -1326,14 +1806,20 @@ function gm3ZeusCam:CreateCameraHooks(bool)
         gm3ZeusCam:AddHook("Think", function()
             if not EnabledCam then return end
 
-            local shouldCursor = gm3_spawnMode or input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT)
+            local shouldCursor = gm3_spawnMode or gm3_waypointMode or input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT)
             gm3ZeusCam:SetCursorMode(shouldCursor)
+            UpdateRouteVisualProgress()
 
             if gm3_spawnMode and gm3_cursorMode then
                 if input.IsMouseDown(MOUSE_LEFT) and CurTime() > gm3_spawnNextClick then
                     gm3_spawnNextClick = CurTime() + 0.35
                     gm3ZeusCam:SpawnAtCursor()
                 end
+                return
+            end
+
+            if gm3_waypointMode and gm3_cursorMode then
+                gm3ZeusCam:HandleWaypointInput()
                 return
             end
 
@@ -1386,14 +1872,104 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                 local startPos = ent:WorldSpaceCenter()
                 local endPos = order.target
                 local color = GetSelectionColor(ent)
-                render.DrawLine(startPos, endPos, Color(color.r, color.g, color.b, 200), true)
+                local elevatedStart = startPos + Vector(0, 0, 8)
+                local elevatedEnd = endPos + Vector(0, 0, 8)
+                DrawThickBeam(elevatedStart, elevatedEnd, 6, Color(color.r, color.g, color.b, 190))
 
                 local dist = math.Round(startPos:Distance(endPos))
                 local mid = LerpVector(0.5, startPos, endPos) + Vector(0, 0, 10)
-                cam.Start3D2D(mid, Angle(0, CamAngle.y - 90, 90), 0.1)
-                    draw.RoundedBox(4, -60, -12, 120, 24, Color(20, 20, 20, 220))
+                cam.Start3D2D(mid, Angle(0, CamAngle.y - 90, 90), 0.12)
+                    draw.RoundedBox(5, -70, -14, 140, 28, Color(20, 20, 20, 225))
                     draw.SimpleText(dist .. "u", "GM3_Cam_Subtitle", 0, 0, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 cam.End3D2D()
+            end
+
+            for ent, route in pairs(gm3_routeVisuals) do
+                if not IsValid(ent) or not istable(route.nodes) or #route.nodes == 0 then
+                    gm3_routeVisuals[ent] = nil
+                else
+                    local routeColor = route.color or gm3_routeColors.default
+                    local prev = ent:WorldSpaceCenter()
+                    local up = Vector(0, 0, 8)
+                    for idx, node in ipairs(route.nodes) do
+                        local alpha = idx < (route.currentIndex or 1) and 90 or 230
+                        local beamColor = Color(routeColor.r, routeColor.g, routeColor.b, alpha)
+                        DrawThickBeam(prev + up, node + up, (route.thickness or 4) + (idx == route.currentIndex and 1 or 0), beamColor)
+                        render.DrawWireframeSphere(node + Vector(0, 0, 4), 10 + idx * 1.5, 12, 12, beamColor, true)
+                        cam.Start3D2D(node + Vector(0, 0, 16), Angle(0, CamAngle.y - 90, 90), 0.08)
+                            draw.RoundedBox(4, -28, -12, 56, 24, Color(15, 15, 15, 220))
+                            draw.SimpleText("WP " .. idx, "GM3_Cam_Subtitle", 0, 0, Color(255, 255, 255, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        cam.End3D2D()
+                        prev = node
+                    end
+                    cam.Start3D2D(prev + Vector(0, 0, 30), Angle(0, CamAngle.y - 90, 90), 0.09)
+                        draw.RoundedBox(4, -80, -14, 160, 28, Color(10, 10, 10, 230))
+                        draw.SimpleText(route.label or "Route", "GM3_Cam_Subtitle", 0, 0, routeColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    cam.End3D2D()
+                end
+            end
+
+            if gm3_waypointMode then
+                local lastPos
+                for idx, waypoint in ipairs(gm3_waypoints) do
+                    render.DrawWireframeSphere(waypoint + Vector(0, 0, 4), 12, 10, 10, Color(60, 180, 255, 220), true)
+                    if lastPos then
+                        DrawThickBeam(lastPos + Vector(0, 0, 6), waypoint + Vector(0, 0, 6), 4, Color(60, 180, 255, 200))
+                    end
+                    cam.Start3D2D(waypoint + Vector(0, 0, 16), Angle(0, CamAngle.y - 90, 90), 0.08)
+                        draw.RoundedBox(4, -22, -12, 44, 24, Color(10, 10, 10, 220))
+                        draw.SimpleText(idx, "GM3_Cam_Subtitle", 0, 0, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    cam.End3D2D()
+                    lastPos = waypoint
+                end
+                if gm3_waypointPreviewPos then
+                    render.DrawWireframeSphere(gm3_waypointPreviewPos + Vector(0, 0, 4), 12, 8, 8, Color(60, 180, 255, 160), true)
+                    if lastPos then
+                        DrawThickBeam(lastPos + Vector(0, 0, 6), gm3_waypointPreviewPos + Vector(0, 0, 6), 4, Color(60, 180, 255, 140))
+                    end
+                end
+            else
+                gm3_waypointPreviewPos = nil
+            end
+
+            local now = CurTime()
+            for i = #gm3_reconPings, 1, -1 do
+                local ping = gm3_reconPings[i]
+                if not ping or ping.expire <= now then
+                    table.remove(gm3_reconPings, i)
+                else
+                    render.DrawWireframeSphere(ping.pos + Vector(0, 0, 2), ping.radius, 18, 18, Color(50, 180, 200, 70), true)
+                    for _, contact in ipairs(ping.contacts or {}) do
+                        local baseColor = gm3_reconColors[contact.type or "unknown"] or gm3_reconColors.unknown
+                        local c = contact.friendly and gm3_reconColors.friendly or baseColor
+                        local contactPos = contact.pos + Vector(0, 0, 6)
+                        render.DrawWireframeSphere(contactPos, 6, 8, 8, Color(c.r, c.g, c.b, 140), true)
+                        local heading = contact.dir or vector_origin
+                        local headingLen = heading:Length()
+                        if headingLen > 0.01 and (contact.speed or 0) > 4 then
+                            local reach = math.Clamp((contact.speed or 0) * 0.05, 10, 140)
+                            local dir = headingLen > 0 and heading / headingLen or Vector()
+                            DrawThickBeam(contactPos + Vector(0, 0, 2), contactPos + dir * reach + Vector(0, 0, 2), 3, Color(c.r, c.g, c.b, 180))
+                        end
+                        cam.Start3D2D(contactPos + Vector(0, 0, 24), Angle(0, CamAngle.y - 90, 90), 0.08)
+                            draw.RoundedBox(4, -90, -12, 180, 24, Color(10, 10, 10, 220))
+                            local label = contact.label or contact.class or contact.type or "?"
+                            local speedInfo = math.floor(contact.speed or 0)
+                            draw.SimpleText(label .. " · " .. speedInfo .. "u/s", "GM3_Cam_Subtitle", 0, 0, c, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        cam.End3D2D()
+                    end
+                end
+            end
+
+            if gm3_waypointMode and gm3_cursorMode then
+                local tr = gm3ZeusCam:GetCursorTrace()
+                if tr.Hit then
+                    render.DrawWireframeSphere(tr.HitPos + Vector(0, 0, 2), 16, 12, 12, Color(60, 180, 255, 150), true)
+                    if #gm3_waypoints > 0 then
+                        local last = gm3_waypoints[#gm3_waypoints]
+                        DrawThickBeam(last + Vector(0, 0, 6), tr.HitPos + Vector(0, 0, 6), 4, Color(60, 180, 255, 110))
+                    end
+                end
             end
 
             if gm3_spawnMode and gm3_cursorMode then
@@ -1418,6 +1994,23 @@ function gm3ZeusCam:CreateCameraHooks(bool)
             if gm3_spawnMode then
                 draw.SimpleText("Spawn Mode: Left click to deploy NPCs", "GM3_Cam_Subtitle", lyx.ScaleW(10), lyx.Scale(92), Color(90, 220, 170), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
+            local hintY = lyx.Scale(92)
+            if gm3_waypointMode then
+                hintY = hintY + lyx.Scale(18)
+                draw.SimpleText("Waypoint Mode: LMB add nodes · RMB confirm · Backspace undo · Delete clear", "GM3_Cam_Subtitle", lyx.ScaleW(10), hintY, Color(80, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                hintY = hintY + lyx.Scale(18)
+                draw.SimpleText(string.format("Active nodes: %d · Loop %s", #gm3_waypoints, gm3_waypointLoop and "ON" or "OFF"), "GM3_Cam_Subtitle", lyx.ScaleW(10), hintY, Color(150, 220, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
+            for ent, route in pairs(gm3_routeVisuals) do
+                if gm3_selectedEntities[ent] and route and istable(route.nodes) and #route.nodes > 0 then
+                    hintY = hintY + lyx.Scale(18)
+                    local totalNodes = #route.nodes
+                    local idx = math.min(route.currentIndex or 1, totalNodes)
+                    local text = string.format("Route: %s (%d/%d)", route.label or "Active", idx, totalNodes)
+                    draw.SimpleText(text, "GM3_Cam_Subtitle", lyx.ScaleW(10), hintY, Color(255, 235, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    break
+                end
+            end
             local selection = GetSelectionList()
 
             if gm3_selectionBox.active and gm3_selectionBox.dragging then
@@ -1426,7 +2019,7 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                 surface.SetDrawColor(255, 80, 80, 40)
                 surface.DrawRect(minX, minY, maxX - minX, maxY - minY)
                 surface.SetDrawColor(255, 80, 80, 255)
-                DrawOutlinedRect(minX, minY, maxX - minX, maxY - minY, 2)
+                DrawOutlinedRect(minX, minY, maxX - minX, maxY - minY, 3)
             end
 
             if #selection > 0 then
@@ -1435,7 +2028,7 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                     if x then
                         local col = GetSelectionColor(ent)
                         surface.SetDrawColor(col.r, col.g, col.b, 230)
-                        DrawOutlinedRect(x, y, w, h, 2)
+                        DrawOutlinedRect(x, y, w, h, 3)
                     end
                 end
             end
@@ -1445,7 +2038,48 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                 if x then
                     local col = GetSelectionColor(gm3_hoveredEntity)
                     surface.SetDrawColor(col.r, col.g, col.b, 200)
-                    DrawOutlinedRect(x, y, w, h, 1)
+                    DrawOutlinedRect(x, y, w, h, 2)
+                end
+            end
+
+            if gm3_waypointMode and gm3_cursorMode then
+                local cursorX, cursorY = gm3ZeusCam:GetCursorPos()
+                local hints = {
+                    "LMB: Add waypoint",
+                    "RMB: Finalize patrol",
+                    "Backspace: Undo",
+                    "Delete: Cancel path"
+                }
+                surface.SetFont("GM3_Cam_Subtitle")
+                local textWidth = 0
+                local textHeight = select(2, surface.GetTextSize("Hg"))
+                for _, text in ipairs(hints) do
+                    local w = surface.GetTextSize(text)
+                    textWidth = math.max(textWidth, w)
+                end
+                local padding = 8
+                local boxW = textWidth + padding * 2
+                local boxH = textHeight * #hints + padding * 2
+                local boxX = math.Clamp(cursorX + 24, 0, ScrW() - boxW - 5)
+                local boxY = math.Clamp(cursorY + 24, 0, ScrH() - boxH - 5)
+                surface.SetDrawColor(5, 5, 5, 200)
+                surface.DrawRect(boxX, boxY, boxW, boxH)
+                surface.SetDrawColor(60, 180, 255, 200)
+                surface.DrawOutlinedRect(boxX, boxY, boxW, boxH)
+                for i, text in ipairs(hints) do
+                    draw.SimpleText(text, "GM3_Cam_Subtitle", boxX + padding, boxY + padding + (i - 1) * textHeight, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+            end
+
+
+            if #gm3_reconPings > 0 then
+                local right = ScrW() - lyx.ScaleW(20)
+                local reconY = lyx.Scale(50)
+                for _, ping in ipairs(gm3_reconPings) do
+                    local remaining = math.max(0, ping.expire - CurTime())
+                    local label = string.format("Recon ping: %dm radius · contacts %d · %.1fs", math.floor(ping.radius or 0), #(ping.contacts or {}), remaining)
+                    draw.SimpleText(label, "GM3_Cam_Subtitle", right, reconY, Color(120, 200, 255), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+                    reconY = reconY + lyx.Scale(18)
                 end
             end
         end)
@@ -1456,11 +2090,13 @@ function gm3ZeusCam:CreateCameraHooks(bool)
         gm3ZeusCam:CreateCamPanel(false)
         gm3ZeusCam:SetCursorMode(false)
         gm3ZeusCam:SetSpawnMode(false)
+        gm3ZeusCam:SetWaypointMode(false)
         gm3_hoveredEntity = nil
         gm3_selectionBox.active = false
         gm3_selectionBox.dragging = false
         ClearSelection()
         table.Empty(gm3_moveOrders)
+        ClearRouteVisuals()
     end
 end
 
@@ -1475,5 +2111,32 @@ lyx:NetAdd("gm3ZeusCam_toggleState", {
         EnabledCam = state
         EnabledCamConfirm = state
         gm3ZeusCam:CreateCameraHooks(state)
+    end
+})
+
+lyx:NetAdd("gm3ZeusCam_reconData", {
+    func = function(len)
+        local center = net.ReadVector()
+        local radius = net.ReadUInt(12) or 0
+        local count = net.ReadUInt(8) or 0
+        local contacts = {}
+        for i = 1, count do
+            contacts[i] = {
+                pos = net.ReadVector(),
+                type = net.ReadString(),
+                class = net.ReadString(),
+                label = net.ReadString(),
+                dir = net.ReadVector(),
+                speed = net.ReadFloat(),
+                friendly = net.ReadBool()
+            }
+        end
+        gm3_reconPings[#gm3_reconPings + 1] = {
+            pos = center,
+            radius = radius,
+            contacts = contacts,
+            expire = CurTime() + 8
+        }
+        surface.PlaySound("buttons/combine_button2.wav")
     end
 })
