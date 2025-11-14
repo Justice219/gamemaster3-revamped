@@ -10,6 +10,33 @@ surface.CreateFont("OpsatColors", {
 })
 
 function PANEL:Init()
+    self.ScrollPanel = self.ScrollPanel or vgui.Create("lyx.ScrollPanel2", self)
+    self.ScrollPanel:Dock(FILL)
+
+    local zeusPanel = vgui.Create("DPanel", self.ScrollPanel)
+    zeusPanel:Dock(TOP)
+    zeusPanel:DockMargin(0, 0, lyx.Scale(5), lyx.Scale(10))
+    zeusPanel:SetTall(lyx.Scale(60))
+    zeusPanel.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, lyx.Colors.Foreground)
+        draw.SimpleText("Zeus Mode", "Lyx.Title", lyx.Scale(10), lyx.Scale(10), color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText("Toggle the top-down Gamemaster camera.", "Lyx.Title", lyx.Scale(10), lyx.Scale(30), Color(220, 220, 220), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    end
+    self.ScrollPanel:AddItem(zeusPanel)
+
+    local toggleBtn = vgui.Create("lyx.TextButton2", zeusPanel)
+    toggleBtn:Dock(RIGHT)
+    toggleBtn:DockMargin(0, lyx.Scale(12), lyx.Scale(12), lyx.Scale(12))
+    toggleBtn:SetWide(lyx.Scale(180))
+    toggleBtn:SetText("Toggle Zeus Mode")
+    toggleBtn.DoClick = function()
+        if gm3ZeusCam and gm3ZeusCam.RequestToggle then
+            gm3ZeusCam:RequestToggle()
+        else
+            RunConsoleCommand("gm3Cam_toggle")
+        end
+    end
+
     local categories = {}
 
     for k,v in pairs(gm3.settings) do

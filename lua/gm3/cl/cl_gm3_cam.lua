@@ -32,6 +32,7 @@ local gm3_spawnConfig = {
     count = 1,
     relationship = "hostile"
 }
+local gm3_spawnPresets = gm3_spawnPresets or {}
 local gm3_formations = {}
 local gm3_formationSpacing = 80
 local gm3_selectionBox = {
@@ -48,6 +49,7 @@ local gm3_cursorMode = false
 local gm3_rightMouseHeld = false
 local gm3CamPanel = nil
 local gm3_zeusAllowed = false
+local gm3_selectionGroups = gm3_selectionGroups or {}
 
 surface.CreateFont("GM3_Cam_Subtitle", {
     font = "Roboto",
@@ -83,10 +85,6 @@ function gm3ZeusCam:ClearHooks()
 end
 
 function gm3ZeusCam:RequestToggle(state)
-    if not gm3_zeusAllowed then
-        notification.AddLegacy("You do not have access to Zeus.", NOTIFY_ERROR, 3)
-        return
-    end
     state = state ~= nil and state or not EnabledCam
     lyx:NetSend("gm3ZeusCam_toggleRequest", function()
         net.WriteBool(state and true or false)
@@ -118,6 +116,16 @@ end
 local function ClearSelection()
     table.Empty(gm3_selectedEntities)
     gm3_selectionCount = 0
+end
+
+local function RestoreSelection(list)
+    ClearSelection()
+    for _, ent in ipairs(list or {}) do
+        if IsValid(ent) then
+            gm3_selectedEntities[ent] = true
+        end
+    end
+    gm3_selectionCount = table.Count(gm3_selectedEntities)
 end
 
 local function AddToSelection(ent)
@@ -240,6 +248,139 @@ gm3_formations.circle = function(count, spacing)
     return offsets
 end
 
+function gm3ZeusCam:BuildNPCCache()
+    if self.NPCCache then return self.NPCCache end
+    local npcList = list.Get and list.Get("NPC") or {}
+    local categories = {}
+    for class, data in pairs(npcList) do
+        local cat = data.Category or "Other"
+        categories[cat] = categories[cat] or {}
+        table.insert(categories[cat], {
+            name = data.Name or class,
+            class = class,
+            data = data
+        })
+    end
+    for _, entries in pairs(categories) do
+        table.sort(entries, function(a, b) return tostring(a.name) < tostring(b.name) end)
+    end
+    self.NPCCache = categories
+    return categories
+end
+
+function gm3ZeusCam:FindNPCEntry(class)
+    if not class then return end
+    local cache = self:BuildNPCCache()
+    for category, entries in pairs(cache) do
+        for _, entry in ipairs(entries) do
+            if entry.class == class then
+                return category, entry
+            end
+        end
+    end
+end
+
+function gm3ZeusCam:RefreshSpawnControls()
+    if not self.SpawnControls then return end
+    self._refreshingSpawn = true
+    local controls = self.SpawnControls
+
+    if IsValid(controls.classEntry) and controls.classEntry:GetValue() ~= (gm3_spawnConfig.class or "") then
+        controls.classEntry:SetValue(gm3_spawnConfig.class or "")
+    end
+    if IsValid(controls.weaponEntry) and controls.weaponEntry:GetValue() ~= (gm3_spawnConfig.weapon or "") then
+        controls.weaponEntry:SetValue(gm3_spawnConfig.weapon or "")
+    end
+    if IsValid(controls.countEntry) then
+        controls.countEntry:SetValue(tostring(gm3_spawnConfig.count or 1))
+    end
+    if IsValid(controls.relationship) then
+        controls.relationship:SetValue(string.upper(string.sub(gm3_spawnConfig.relationship or "hostile", 1, 1)) .. string.sub(gm3_spawnConfig.relationship or "hostile", 2))
+    end
+
+    if IsValid(controls.categoryCombo) and IsValid(controls.npcCombo) then
+        local cat, entry = self:FindNPCEntry(gm3_spawnConfig.class)
+        if cat then
+            if controls.populateNPCCombo then
+                controls.populateNPCCombo(cat)
+            end
+            controls.categoryCombo:SetValue(cat)
+            if entry then
+                controls.npcCombo:SetValue(entry.name or entry.class)
+            end
+        end
+    end
+
+    if controls.PresetButtons then
+        for slot, btn in ipairs(controls.PresetButtons) do
+            if IsValid(btn) then
+                local preset = gm3_spawnPresets[slot]
+                local labelText
+                if preset and preset.class and preset.class ~= "" then
+                    labelText = "Slot " .. slot .. ": " .. preset.class
+                elseif preset then
+                    labelText = "Slot " .. slot .. ": (custom)"
+                else
+                    labelText = "Slot " .. slot .. ": empty"
+                end
+                btn:SetText(labelText)
+            end
+        end
+    end
+
+    self._refreshingSpawn = false
+end
+
+function gm3ZeusCam:SaveSpawnPreset(slot)
+    gm3_spawnPresets[slot] = table.Copy(gm3_spawnConfig)
+    notification.AddLegacy("Saved spawn preset #" .. slot, NOTIFY_GENERIC, 2)
+    self:RefreshSpawnControls()
+end
+
+function gm3ZeusCam:LoadSpawnPreset(slot)
+    local preset = gm3_spawnPresets[slot]
+    if not preset then
+        notification.AddLegacy("Preset slot #" .. slot .. " is empty", NOTIFY_HINT, 2)
+        return
+    end
+    gm3_spawnConfig = table.Copy(preset)
+    notification.AddLegacy("Loaded spawn preset #" .. slot, NOTIFY_GENERIC, 2)
+    self:RefreshSpawnControls()
+end
+
+function gm3ZeusCam:FocusSelection()
+    local selection = GetSelectionList()
+    if #selection == 0 then
+        notification.AddLegacy("No entities selected.", NOTIFY_HINT, 2)
+        return
+    end
+    local center = Vector()
+    local valid = 0
+    for _, ent in ipairs(selection) do
+        if IsValid(ent) then
+            center:Add(ent:WorldSpaceCenter())
+            valid = valid + 1
+        end
+    end
+    if valid == 0 then return end
+    center = center / valid
+    CamPos = center + Vector(0, 0, 300)
+    CamAngle = Angle(60, CamAngle.y, 0)
+    CamOriginalAngle = CamAngle
+end
+
+function gm3ZeusCam:ShockwaveAtCursor()
+    local tr = self:GetCursorTrace()
+    if not tr.Hit then
+        notification.AddLegacy("Aim at a location to trigger the shockwave.", NOTIFY_HINT, 2)
+        return
+    end
+    lyx:NetSend("gm3ZeusCam_shockwave", function()
+        net.WriteVector(tr.HitPos)
+        net.WriteUInt(400, 16)
+    end)
+end
+
 local function SelectionHasPlayers()
     for ent, _ in pairs(gm3_selectedEntities) do
         if IsValid(ent) and ent:IsPlayer() and ent ~= LocalPlayer() then
@@ -354,6 +495,26 @@ local function CleanupMoveOrders()
     end
 end
 
+function gm3ZeusCam:SaveSelectionGroup(slot)
+    local selection = GetSelectionList()
+    if #selection == 0 then
+        notification.AddLegacy("Select entities before saving a group.", NOTIFY_HINT, 2)
+        return
+    end
+    gm3_selectionGroups[slot] = table.Copy(selection)
+    notification.AddLegacy("Saved selection group #" .. slot, NOTIFY_GENERIC, 2)
+end
+
+function gm3ZeusCam:LoadSelectionGroup(slot)
+    local group = gm3_selectionGroups[slot]
+    if not group then
+        notification.AddLegacy("Selection group #" .. slot .. " is empty.", NOTIFY_HINT, 2)
+        return
+    end
+    RestoreSelection(group)
+    notification.AddLegacy("Loaded selection group #" .. slot, NOTIFY_GENERIC, 2)
+end
+
 function gm3ZeusCam:SetSpawnMode(state)
     gm3_spawnMode = state and true or false
     if IsValid(self.SpawnModeButton) then
@@ -368,41 +529,142 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
     end
 
     local panel = vgui.Create("DPanel", parent)
-    panel:SetSize(lyx.ScaleW(260), lyx.Scale(190))
-    panel:SetPos(lyx.Scale(10), lyx.Scale(120))
+    panel:SetSize(lyx.ScaleW(320), lyx.Scale(380))
+    panel:SetPos(ScrW() - lyx.ScaleW(340), lyx.Scale(80))
     panel.Paint = function(s, w, h)
-        surface.SetDrawColor(gm3_spawnMode and Color(20, 80, 60, 220) or Color(30, 30, 30, 220))
+        surface.SetDrawColor(gm3_spawnMode and Color(20, 80, 60, 230) or Color(30, 30, 30, 220))
         surface.DrawRect(0, 0, w, h)
         surface.SetDrawColor(70, 70, 70, 255)
         surface.DrawOutlinedRect(0, 0, w, h)
-        draw.SimpleText("Spawn Toolbar", "GM3_Cam_Subtitle", lyx.Scale(8), lyx.Scale(5), color_white)
+        draw.SimpleText("Spawn Toolbar", "GM3_Cam_Subtitle", lyx.Scale(10), lyx.Scale(6), color_white)
+        draw.SimpleText("Shift+Click preset to save, click to load", "GM3_Cam_Subtitle", lyx.Scale(10), lyx.Scale(24), Color(200, 200, 200))
     end
+
+    local cache = self:BuildNPCCache()
+
+    local catLabel = vgui.Create("DLabel", panel)
+    catLabel:Dock(TOP)
+    catLabel:DockMargin(lyx.Scale(8), lyx.Scale(46), lyx.Scale(8), lyx.Scale(2))
+    catLabel:SetFont("GM3_Cam_Subtitle")
+    catLabel:SetText("NPC Category")
+    catLabel:SetTextColor(color_white)
+    catLabel:SetTall(lyx.Scale(18))
+
+    local categoryCombo = vgui.Create("DComboBox", panel)
+    categoryCombo:Dock(TOP)
+    categoryCombo:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
+    categoryCombo:SetTall(lyx.Scale(24))
+    categoryCombo:SetValue("Category")
+
+    local npcLabel = vgui.Create("DLabel", panel)
+    npcLabel:Dock(TOP)
+    npcLabel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(2))
+    npcLabel:SetFont("GM3_Cam_Subtitle")
+    npcLabel:SetText("NPC Entry")
+    npcLabel:SetTextColor(color_white)
+    npcLabel:SetTall(lyx.Scale(18))
+
+    local npcCombo = vgui.Create("DComboBox", panel)
+    npcCombo:Dock(TOP)
+    npcCombo:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(6))
+    npcCombo:SetTall(lyx.Scale(24))
+    npcCombo:SetValue("NPC")
+
+    local function PopulateNPCCombo(category)
+        npcCombo:Clear()
+        npcCombo.ClassMap = {}
+        npcCombo:SetValue("NPC")
+        local entries = cache[category] or {}
+        for _, entry in ipairs(entries) do
+            npcCombo:AddChoice(entry.name, entry)
+            npcCombo.ClassMap[entry.name] = entry
+        end
+    end
+
+    for category, _ in SortedPairs(cache) do
+        categoryCombo:AddChoice(category)
+    end
+
+    categoryCombo.OnSelect = function(_, _, value)
+        PopulateNPCCombo(value)
+    end
+
+    npcCombo.OnSelect = function(_, _, entry)
+        if not entry or self._refreshingSpawn then return end
+        gm3_spawnConfig.class = entry.class
+        local weapons = entry.data and entry.data.Weapons
+        if istable(weapons) and weapons[1] then
+            gm3_spawnConfig.weapon = weapons[1]
+        else
+            gm3_spawnConfig.weapon = ""
+        end
+        self:RefreshSpawnControls()
+    end
+
+    local initialCategory, initialEntry = self:FindNPCEntry(gm3_spawnConfig.class)
+    if not initialCategory then
+        initialCategory = next(cache)
+    end
+    if initialCategory then
+        PopulateNPCCombo(initialCategory)
+        categoryCombo:SetValue(initialCategory)
+        if initialEntry then
+            npcCombo:SetValue(initialEntry.name or initialEntry.class)
+        end
+    end
+
+    local classLabel = vgui.Create("DLabel", panel)
+    classLabel:Dock(TOP)
+    classLabel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(2))
+    classLabel:SetFont("GM3_Cam_Subtitle")
+    classLabel:SetText("NPC Class Override")
+    classLabel:SetTextColor(color_white)
+    classLabel:SetTall(lyx.Scale(18))
 
     local classEntry = vgui.Create("lyx.TextEntry2", panel)
     classEntry:Dock(TOP)
-    classEntry:DockMargin(lyx.Scale(8), lyx.Scale(28), lyx.Scale(8), lyx.Scale(6))
-    classEntry:SetPlaceholderText("NPC Class (npc_combine_s)")
+    classEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
+    classEntry:SetPlaceholderText("NPC Class")
     classEntry:SetValue(gm3_spawnConfig.class)
     classEntry.OnChange = function(s)
+        if self._refreshingSpawn then return end
         gm3_spawnConfig.class = string.Trim(s:GetValue() or "")
     end
 
+    local weaponLabel = vgui.Create("DLabel", panel)
+    weaponLabel:Dock(TOP)
+    weaponLabel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(2))
+    weaponLabel:SetFont("GM3_Cam_Subtitle")
+    weaponLabel:SetText("Weapon Override")
+    weaponLabel:SetTextColor(color_white)
+    weaponLabel:SetTall(lyx.Scale(18))
+
     local weaponEntry = vgui.Create("lyx.TextEntry2", panel)
     weaponEntry:Dock(TOP)
-    weaponEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(6))
+    weaponEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
     weaponEntry:SetPlaceholderText("Weapon (weapon_smg1)")
     weaponEntry:SetValue(gm3_spawnConfig.weapon)
     weaponEntry.OnChange = function(s)
+        if self._refreshingSpawn then return end
         gm3_spawnConfig.weapon = string.Trim(s:GetValue() or "")
     end
 
+    local countLabel = vgui.Create("DLabel", panel)
+    countLabel:Dock(TOP)
+    countLabel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(2))
+    countLabel:SetFont("GM3_Cam_Subtitle")
+    countLabel:SetText("Spawn Count")
+    countLabel:SetTextColor(color_white)
+    countLabel:SetTall(lyx.Scale(18))
+
     local countEntry = vgui.Create("lyx.TextEntry2", panel)
     countEntry:Dock(TOP)
-    countEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(6))
+    countEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
     countEntry:SetPlaceholderText("Count (1-20)")
     countEntry:SetValue(tostring(gm3_spawnConfig.count))
     countEntry:SetNumeric(true)
     countEntry.OnChange = function(s)
+        if self._refreshingSpawn then return end
         local val = tonumber(s:GetValue()) or 1
         gm3_spawnConfig.count = math.Clamp(math.floor(val), 1, 20)
     end
@@ -417,6 +679,29 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         gm3_spawnConfig.relationship = value
     end
 
+    local presetPanel = vgui.Create("DPanel", panel)
+    presetPanel:Dock(TOP)
+    presetPanel:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(6))
+    presetPanel:SetTall(lyx.Scale(150))
+    presetPanel.Paint = nil
+
+    local presetButtons = {}
+    for slot = 1, 5 do
+        local btn = vgui.Create("lyx.TextButton2", presetPanel)
+        btn:Dock(TOP)
+        btn:DockMargin(0, 0, 0, lyx.Scale(4))
+        btn:SetTall(lyx.Scale(26))
+        btn:SetText("Slot " .. slot .. ": empty")
+        btn.DoClick = function()
+            if input.IsShiftDown() or not gm3_spawnPresets[slot] then
+                gm3ZeusCam:SaveSpawnPreset(slot)
+            else
+                gm3ZeusCam:LoadSpawnPreset(slot)
+            end
+        end
+        presetButtons[slot] = btn
+    end
+
     local toggle = vgui.Create("lyx.TextButton2", panel)
     toggle:Dock(BOTTOM)
     toggle:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(8))
@@ -428,7 +713,18 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
 
     self.SpawnToolbar = panel
     self.SpawnModeButton = toggle
+    self.SpawnControls = {
+        categoryCombo = categoryCombo,
+        npcCombo = npcCombo,
+        classEntry = classEntry,
+        weaponEntry = weaponEntry,
+        countEntry = countEntry,
+        relationship = relationship,
+        PresetButtons = presetButtons,
+        populateNPCCombo = PopulateNPCCombo
+    }
     self:SetSpawnMode(false)
+    self:RefreshSpawnControls()
 end
 
 function gm3ZeusCam:SpawnAtCursor()
@@ -579,6 +875,21 @@ function gm3ZeusCam:OpenContextMenu()
             formationMenu:AddOption("Circle", function()
                 self:SendFormationCommand("circle")
             end):SetIcon("icon16/shape_ungroup.png")
+
+            local behaviorMenu, behaviorOption = menu:AddSubMenu("NPC Behavior")
+            behaviorOption:SetIcon("icon16/cog.png")
+            behaviorMenu:AddOption("Hold Position", function()
+                self:SetNPCState("hold")
+            end):SetIcon("icon16/flag_red.png")
+            behaviorMenu:AddOption("Defensive", function()
+                self:SetNPCState("defend")
+            end):SetIcon("icon16/lock.png")
+            behaviorMenu:AddOption("Free Roam", function()
+                self:SetNPCState("patrol")
+            end):SetIcon("icon16/world.png")
+            behaviorMenu:AddOption("Aggressive", function()
+                self:SetNPCState("aggressive")
+            end):SetIcon("icon16/exclamation.png")
         end
 
         if hasPlayers then
@@ -611,6 +922,29 @@ function gm3ZeusCam:OpenContextMenu()
             end):SetIcon("icon16/box_world.png")
         end
     end
+
+    if gm3_selectionCount > 0 then
+        menu:AddSpacer()
+        local groupMenu, groupOption = menu:AddSubMenu("Selection Groups")
+        groupOption:SetIcon("icon16/group.png")
+        for slot = 1, 3 do
+            groupMenu:AddOption("Save Group " .. slot, function()
+                self:SaveSelectionGroup(slot)
+            end):SetIcon("icon16/disk.png")
+            groupMenu:AddOption("Load Group " .. slot, function()
+                self:LoadSelectionGroup(slot)
+            end):SetIcon("icon16/folder.png")
+        end
+
+        menu:AddOption("Focus Camera on Selection", function()
+            self:FocusSelection()
+        end):SetIcon("icon16/camera.png")
+    end
+
+    menu:AddSpacer()
+    menu:AddOption("Shockwave at Cursor", function()
+        self:ShockwaveAtCursor()
+    end):SetIcon("icon16/lightning.png")
 
     menu:AddOption("Clear Selection", function()
         ClearSelection()
@@ -746,6 +1080,16 @@ function gm3ZeusCam:HealNPCs()
         return
     end
     self:SendSelectionCommand("gm3ZeusCam_healNPCs")
+end
+
+function gm3ZeusCam:SetNPCState(state)
+    if not SelectionHasNPCs() then
+        notification.AddLegacy("Selection has no NPCs.", NOTIFY_HINT, 2)
+        return
+    end
+    self:SendSelectionCommand("gm3ZeusCam_setNPCState", nil, function()
+        net.WriteString(state or "")
+    end)
 end
 
 function gm3ZeusCam:CreateCamPanel(bool)

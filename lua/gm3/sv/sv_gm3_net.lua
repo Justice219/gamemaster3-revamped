@@ -431,6 +431,31 @@ do
         end,
         rateLimit = 10
     })
+    lyx:NetAdd("gm3ZeusCam_toggleState", {})
+
+    --[[
+        Zeus Cam - Toggle request
+    ]]
+    lyx:NetAdd("gm3ZeusCam_toggleRequest", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus cam toggle by " .. ply:Nick(), 2)
+                ply:ChatPrint("You do not have access to Zeus mode.")
+                return
+            end
+
+            local state = net.ReadBool()
+
+            lyx:NetSend("gm3ZeusCam_toggleState", ply, function()
+                net.WriteBool(state and true or false)
+            end)
+        end,
+        auth = function(ply)
+            return gm3:SecurityCheck(ply)
+        end,
+        rateLimit = 5
+    })
+
     --[[
         Zeus Cam - Remove selected entities
     ]]
@@ -624,6 +649,69 @@ do
         rateLimit = 5
     })
     --[[
+        Zeus Cam - Set NPC behavior
+    ]]
+    lyx:NetAdd("gm3ZeusCam_setNPCState", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus NPC state change by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(100)
+            local state = net.ReadString() or ""
+            if not entities or #state < 1 then
+                ply:ChatPrint("Invalid NPC selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    if ent.ClearSchedule then
+                        ent:ClearSchedule()
+                    end
+                    if ent.ClearGoalEntity then
+                        ent:ClearGoalEntity()
+                    end
+
+                    if state == "hold" then
+                        if ent.SetLastPosition then
+                            ent:SetLastPosition(ent:GetPos())
+                        end
+                        if ent.SetSchedule then
+                            ent:SetSchedule(SCHED_IDLE_STAND)
+                        end
+                    elseif state == "defend" then
+                        if ent.SetNPCState then
+                            ent:SetNPCState(NPC_STATE_ALERT)
+                        end
+                        if ent.SetSchedule then
+                            ent:SetSchedule(SCHED_ALERT_STAND)
+                        end
+                    elseif state == "patrol" then
+                        if ent.SetNPCState then
+                            ent:SetNPCState(NPC_STATE_IDLE)
+                        end
+                        if ent.SetSchedule then
+                            ent:SetSchedule(SCHED_IDLE_WANDER)
+                        end
+                    elseif state == "aggressive" then
+                        if ent.SetNPCState then
+                            ent:SetNPCState(NPC_STATE_COMBAT)
+                        end
+                        if ent.SetSchedule then
+                            ent:SetSchedule(SCHED_CHASE_ENEMY)
+                        end
+                    end
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam NPC state '" .. state .. "' by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
         Zeus Cam - Freeze/Unfreeze props
     ]]
     lyx:NetAdd("gm3ZeusCam_freezeProps", {
@@ -654,6 +742,117 @@ do
             end
 
             lyx.Logger:Log("Zeus cam prop freeze (" .. tostring(freeze) .. ") by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Teleport props
+    ]]
+    lyx:NetAdd("gm3ZeusCam_propsToCamera", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus prop teleport by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(150)
+            local camPos = net.ReadVector()
+
+            if not entities or not isvector(camPos) then
+                ply:ChatPrint("Invalid prop selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and ent:GetClass() == "prop_physics" then
+                    ent:SetPos(camPos + Vector(math.Rand(-10, 10), math.Rand(-10, 10), math.Rand(0, 6)))
+                    local phys = ent:GetPhysicsObject()
+                    if IsValid(phys) then
+                        phys:SetVelocity(vector_origin)
+                        phys:Sleep()
+                    end
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam props to camera by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+
+    lyx:NetAdd("gm3ZeusCam_propsToCursor", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus prop cursor teleport by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(150)
+            local targetPos = net.ReadVector()
+
+            if not entities or not isvector(targetPos) then
+                ply:ChatPrint("Invalid prop selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and ent:GetClass() == "prop_physics" then
+                    ent:SetPos(targetPos + Vector(math.Rand(-14, 14), math.Rand(-14, 14), math.Rand(0, 8)))
+                    local phys = ent:GetPhysicsObject()
+                    if IsValid(phys) then
+                        phys:SetVelocity(vector_origin)
+                        phys:Sleep()
+                    end
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam props to cursor by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Shockwave
+    ]]
+    lyx:NetAdd("gm3ZeusCam_shockwave", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus shockwave by " .. ply:Nick(), 2)
+                return
+            end
+
+            local origin = net.ReadVector()
+            local radius = net.ReadUInt(16) or 400
+            if not isvector(origin) then
+                ply:ChatPrint("Invalid shockwave position")
+                return
+            end
+            radius = math.Clamp(radius, 100, 1000)
+
+            local affected = ents.FindInSphere(origin, radius)
+            for _, ent in ipairs(affected) do
+                if ent:IsPlayer() then
+                    ent:ScreenFade(SCREENFADE.IN, Color(255, 0, 0, 100), 0.5, 0.5)
+                    ent:TakeDamage(25, ply, ply)
+                elseif ent:IsNPC() or ent:IsNextBot() then
+                    local dmg = DamageInfo()
+                    dmg:SetDamage(200)
+                    dmg:SetAttacker(ply)
+                    dmg:SetInflictor(ply)
+                    dmg:SetDamageType(DMG_BLAST)
+                    ent:TakeDamageInfo(dmg)
+                elseif ent:GetClass() == "prop_physics" then
+                    local phys = ent:GetPhysicsObject()
+                    if IsValid(phys) then
+                        local dir = (ent:GetPos() - origin):GetNormalized()
+                        phys:EnableMotion(true)
+                        phys:ApplyForceCenter(dir * 50000)
+                    end
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam shockwave triggered by " .. ply:Nick())
         end,
         auth = function(ply) return gm3:SecurityCheck(ply) end,
         rateLimit = 5
@@ -754,6 +953,33 @@ do
             end
 
             lyx.Logger:Log(string.format("Zeus cam spawned %d x %s by %s", spawned, class, ply:Nick()))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+
+    lyx:NetAdd("gm3ZeusCam_healNPCs", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus heal attempt by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(100)
+            if not entities then
+                ply:ChatPrint("Invalid selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    local maxHealth = ent.GetMaxHealth and ent:GetMaxHealth() or 100
+                    maxHealth = math.max(maxHealth, ent:Health())
+                    ent:SetHealth(maxHealth)
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam NPC heal by " .. ply:Nick())
         end,
         auth = function(ply) return gm3:SecurityCheck(ply) end,
         rateLimit = 5
