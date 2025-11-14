@@ -23,63 +23,171 @@ if SERVER then
         {
             ["Scene Mode"] = {
                 type = "string",
-                def = "cinematic" -- Options: cinematic, cutscene, dialogue, action
-            },
-            ["Target Players"] = {
-                type = "string",
-                def = "all" -- all, specific player steamid, or team name
-            },
-            ["Camera Mode"] = {
-                type = "string",
-                def = "fixed" -- Options: fixed, follow, orbit, free
-            },
-            ["Camera Target"] = {
-                type = "string",
-                def = "self" -- Player steamid or entity class
-            },
-            ["Camera Distance"] = {
-                type = "number",
-                def = 150 -- Distance from target
-            },
-            ["Camera Angle"] = {
-                type = "string",
-                def = "front" -- front, back, left, right, top, custom
-            },
-            ["Subtitle Text"] = {
-                type = "string",
-                def = "" -- Text to display
-            },
-            ["Subtitle Speaker"] = {
-                type = "string",
-                def = "" -- Who is speaking (shows above subtitle)
-            },
-            ["Subtitle Duration"] = {
-                type = "number",
-                def = 5 -- How long to show subtitle
-            },
-            ["Scene Effect"] = {
-                type = "string",
-                def = "none" -- none, fade_in, fade_out, letterbox, blur, slowmo, blackwhite
-            },
-            ["Effect Intensity"] = {
-                type = "number",
-                def = 1 -- 0.1 to 2
-            },
-            ["Freeze Players"] = {
-                type = "boolean",
-                def = true -- Freeze players during scene
-            },
-            ["Hide HUD"] = {
-                type = "boolean",
-                def = true -- Hide HUD elements during scene
+                def = "cinematic",
+                label = "Scene Mode",
+                description = "Preset that adjusts default easing and behavior.",
+                options = {
+                    {label = "Cinematic (smooth)", value = "cinematic"},
+                    {label = "Cutscene (locked)", value = "cutscene"},
+                    {label = "Dialogue focus", value = "dialogue"},
+                    {label = "Action (fast)", value = "action"}
+                },
+                section = "Scene Flow",
+                sectionOrder = 1,
+                order = 1
             },
             ["Scene Duration"] = {
                 type = "number",
-                def = 10 -- Total scene duration in seconds, 0 = manual end
+                def = 10,
+                label = "Scene Duration (seconds)",
+                description = "Set to 0 to keep the scene active until you manually end it.",
+                section = "Scene Flow",
+                sectionOrder = 1,
+                order = 2
             },
             ["End Scene"] = {
                 type = "boolean",
-                def = false -- Set to true to end active scene
+                def = false,
+                label = "End Active Scene",
+                description = "Toggle to immediately end the selected players' current scene.",
+                section = "Scene Flow",
+                sectionOrder = 1,
+                order = 3
+            },
+            ["Target Players"] = {
+                type = "string",
+                def = "all",
+                label = "Target Players",
+                description = "Use all, a SteamID64, or a group identifier to scope the scene.",
+                placeholder = "all / STEAM_0:1:123456 / jedi",
+                section = "Targets",
+                sectionOrder = 2,
+                order = 4
+            },
+            ["Freeze Players"] = {
+                type = "boolean",
+                def = true,
+                label = "Freeze Players",
+                description = "Prevents movement for the duration of the scene.",
+                section = "Targets",
+                sectionOrder = 2,
+                order = 5
+            },
+            ["Hide HUD"] = {
+                type = "boolean",
+                def = true,
+                label = "Hide HUD",
+                description = "Temporarily hides the player's HUD for a cleaner view.",
+                section = "Targets",
+                sectionOrder = 2,
+                order = 6
+            },
+            ["Camera Mode"] = {
+                type = "string",
+                def = "fixed",
+                label = "Camera Mode",
+                description = "Fixed = static shot, Follow = stick to a player, Orbit = cinematic rotation, Free = manual.",
+                options = {
+                    {label = "Fixed shot", value = "fixed"},
+                    {label = "Follow target", value = "follow"},
+                    {label = "Orbit target", value = "orbit"},
+                    {label = "Free camera", value = "free"}
+                },
+                section = "Camera",
+                sectionOrder = 3,
+                order = 7
+            },
+            ["Camera Target"] = {
+                type = "string",
+                def = "self",
+                label = "Camera Target",
+                description = "SteamID, entity class, or self to use the executing player.",
+                placeholder = "self / STEAM_0:1:123 / npc_combine_s",
+                section = "Camera",
+                sectionOrder = 3,
+                order = 8
+            },
+            ["Camera Distance"] = {
+                type = "number",
+                def = 150,
+                label = "Camera Distance",
+                description = "Distance from the camera target when using fixed/follow/orbit modes.",
+                section = "Camera",
+                sectionOrder = 3,
+                order = 9
+            },
+            ["Camera Angle"] = {
+                type = "string",
+                def = "front",
+                label = "Camera Angle",
+                description = "Choose a preset angle or type custom pitch,yaw,roll values.",
+                options = {
+                    {label = "Front", value = "front"},
+                    {label = "Back", value = "back"},
+                    {label = "Left", value = "left"},
+                    {label = "Right", value = "right"},
+                    {label = "Top-down", value = "top"},
+                    {label = "Custom (enter angles)", value = "custom"}
+                },
+                section = "Camera",
+                sectionOrder = 3,
+                order = 10
+            },
+            ["Subtitle Text"] = {
+                type = "string",
+                def = "",
+                label = "Subtitle Text",
+                description = "Optional text displayed during the scene.",
+                placeholder = "\"You have your orders.\"",
+                section = "Subtitles",
+                sectionOrder = 4,
+                order = 11
+            },
+            ["Subtitle Speaker"] = {
+                type = "string",
+                def = "",
+                label = "Subtitle Speaker",
+                description = "Name shown above the subtitle line.",
+                placeholder = "Commander Bly",
+                section = "Subtitles",
+                sectionOrder = 4,
+                order = 12
+            },
+            ["Subtitle Duration"] = {
+                type = "number",
+                def = 5,
+                label = "Subtitle Duration",
+                description = "How long subtitles remain on screen (seconds).",
+                section = "Subtitles",
+                sectionOrder = 4,
+                order = 13
+            },
+            ["Scene Effect"] = {
+                type = "string",
+                def = "none",
+                label = "Scene Effect",
+                description = "Layer additional post-processing on top of the camera.",
+                options = {
+                    {label = "None", value = "none"},
+                    {label = "Fade In", value = "fade_in"},
+                    {label = "Fade Out", value = "fade_out"},
+                    {label = "Letterbox", value = "letterbox"},
+                    {label = "Blur", value = "blur"},
+                    {label = "Slow Motion", value = "slowmo"},
+                    {label = "Black & White", value = "blackwhite"}
+                },
+                section = "Effects",
+                sectionOrder = 5,
+                order = 14
+            },
+            ["Effect Intensity"] = {
+                type = "number",
+                def = 1,
+                label = "Effect Intensity",
+                description = "0.1 - 2.0 range depending on effect type.",
+                section = "Effects",
+                sectionOrder = 5,
+                order = 15
             }
         },
         function(ply, args)

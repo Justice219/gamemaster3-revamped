@@ -221,7 +221,6 @@ function PANEL:Init()
 
     self.HexEntry = vgui.Create("lyx.TextEntry2", hexContainer)
     self.HexEntry:Dock(FILL)
-    self.HexEntry:SetFont("GM3.ColorSelector.Value")
     self.HexEntry:SetPlaceholderText("#RRGGBB")
     self.HexEntry:SetValue(string.format("#%02X%02X%02X", self.SelectedColor.r, self.SelectedColor.g, self.SelectedColor.b))
 

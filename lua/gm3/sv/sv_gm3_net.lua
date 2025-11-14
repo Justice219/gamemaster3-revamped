@@ -20,6 +20,38 @@ do
 end
 
 do
+    local function ReadSelectionEntities(maxCount)
+        local count = net.ReadUInt(12)
+        if not count or count > maxCount then
+            return nil, "Invalid selection size"
+        end
+        local list = {}
+        for i = 1, count do
+            local ent = net.ReadEntity()
+            if IsValid(ent) then
+                table.insert(list, ent)
+            end
+        end
+        return list
+    end
+
+    local function ReadEntityVectorPairs(maxCount)
+        local count = net.ReadUInt(12)
+        if not count or count > maxCount then
+            return nil
+        end
+
+        local results = {}
+        for i = 1, count do
+            local ent = net.ReadEntity()
+            local pos = net.ReadVector()
+            if IsValid(ent) and isvector(pos) then
+                results[#results + 1] = {ent = ent, pos = pos}
+            end
+        end
+        return results
+    end
+
     function gm3:RemoveFromTable(tbl, valueToRemove)
         PrintTable(tbl)
         local newTable = {}
@@ -71,6 +103,7 @@ do
                     description = v.description,
                     args = v.args,
                     author = v.author,
+                    category = v.category
                 }
             end
 
@@ -94,7 +127,7 @@ do
             net.WriteTable(settings)
             net.Send(ply)
 
-            lyx.Logger:Log("Synced GM3 data to " .. ply:Nick())
+            lyx.Logger:Log(string.format("Synced GM3 data to %s (tools: %d)", ply:Nick(), table.Count(tools)))
         end,
         auth = function(ply)
             return gm3:SecurityCheck(ply)
@@ -408,18 +441,15 @@ do
                 return
             end
 
-            local tbl = net.ReadTable()
-
-            -- Validate table size
-            if not tbl or table.Count(tbl) > 100 then
+            local entities, err = ReadSelectionEntities(100)
+            if not entities then
                 ply:ChatPrint("Invalid selection")
                 return
             end
 
-            -- Remove entities safely
-            for k, v in pairs(tbl) do
-                if IsValid(k) and k:IsValid() then
-                    k:Remove()
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) then
+                    ent:Remove()
                 end
             end
 
@@ -440,27 +470,24 @@ do
                 return
             end
 
-            local npcs = net.ReadTable()
+            local entities = ReadSelectionEntities(100)
             local camPos = net.ReadVector()
 
-            -- Validate inputs
-            if not npcs or table.Count(npcs) > 100 then
+            if not entities then
                 ply:ChatPrint("Invalid NPC selection")
                 return
             end
 
-            -- Validate camera position
             if not isvector(camPos) then
                 ply:ChatPrint("Invalid camera position")
                 return
             end
 
             -- Move NPCs to camera position
-            for k, v in pairs(npcs) do
-                if IsValid(k) and k:IsNPC() then
-                    -- Set NPC movement to camera position
-                    k:SetLastPosition(camPos)
-                    k:SetSchedule(SCHED_FORCED_GO)
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    ent:SetLastPosition(camPos)
+                    ent:SetSchedule(SCHED_FORCED_GO)
                 end
             end
 
@@ -481,26 +508,24 @@ do
                 return
             end
 
-            local npcs = net.ReadTable()
+            local entities = ReadSelectionEntities(100)
             local targetPos = net.ReadVector()
 
-            -- Validate inputs
-            if not npcs or table.Count(npcs) > 100 then
+            if not entities then
                 ply:ChatPrint("Invalid NPC selection")
                 return
             end
 
-            -- Validate target position
             if not isvector(targetPos) then
                 ply:ChatPrint("Invalid target position")
                 return
             end
 
             -- Move NPCs to clicked position
-            for k, v in pairs(npcs) do
-                if IsValid(k) and k:IsNPC() then
-                    k:SetLastPosition(targetPos)
-                    k:SetSchedule(SCHED_FORCED_GO)
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    ent:SetLastPosition(targetPos)
+                    ent:SetSchedule(SCHED_FORCED_GO)
                 end
             end
 
@@ -510,6 +535,228 @@ do
             return gm3:SecurityCheck(ply)
         end,
         rateLimit = 10
+    })
+    --[[
+        Zeus Cam - Teleport players to camera position
+    ]]
+    lyx:NetAdd("gm3ZeusCam_playersToCamera", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus player move by " .. ply:Nick(), 2)
+                return
+            end
+
+            local players = ReadSelectionEntities(50)
+            local camPos = net.ReadVector()
+
+            if not players or not isvector(camPos) then
+                ply:ChatPrint("Invalid player selection or position")
+                return
+            end
+
+            for _, ent in ipairs(players) do
+                if IsValid(ent) and ent:IsPlayer() then
+                    ent:SetPos(camPos + Vector(0, 0, 10))
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam player teleport (camera) by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Teleport players to cursor position
+    ]]
+    lyx:NetAdd("gm3ZeusCam_playersToCursor", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus player cursor move by " .. ply:Nick(), 2)
+                return
+            end
+
+            local players = ReadSelectionEntities(50)
+            local targetPos = net.ReadVector()
+
+            if not players or not isvector(targetPos) then
+                ply:ChatPrint("Invalid player selection or position")
+                return
+            end
+
+            for _, ent in ipairs(players) do
+                if IsValid(ent) and ent:IsPlayer() then
+                    ent:SetPos(targetPos + Vector(0, 0, 5))
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam player teleport (cursor) by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Stop NPCs
+    ]]
+    lyx:NetAdd("gm3ZeusCam_stopNPCs", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus NPC stop by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(100)
+            if not entities then
+                ply:ChatPrint("Invalid selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    ent:ClearGoalEntity()
+                    ent:ClearSchedule()
+                    ent:SetSchedule(SCHED_IDLE_STAND)
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam NPC stop by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Freeze/Unfreeze props
+    ]]
+    lyx:NetAdd("gm3ZeusCam_freezeProps", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus prop freeze by " .. ply:Nick(), 2)
+                return
+            end
+
+            local entities = ReadSelectionEntities(150)
+            local freeze = net.ReadBool()
+
+            if not entities then
+                ply:ChatPrint("Invalid prop selection")
+                return
+            end
+
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and ent:GetClass() == "prop_physics" then
+                    local phys = ent:GetPhysicsObject()
+                    if IsValid(phys) then
+                        phys:EnableMotion(not freeze)
+                        if freeze then
+                            phys:Sleep()
+                        end
+                    end
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam prop freeze (" .. tostring(freeze) .. ") by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Move NPCs into formation
+    ]]
+    lyx:NetAdd("gm3ZeusCam_moveFormation", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus formation move by " .. ply:Nick(), 2)
+                return
+            end
+
+            local data = ReadEntityVectorPairs(100)
+            if not data or #data == 0 then
+                ply:ChatPrint("Invalid formation data")
+                return
+            end
+
+            for _, pair in ipairs(data) do
+                local ent, pos = pair.ent, pair.pos
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) and isvector(pos) then
+                    ent:SetLastPosition(pos)
+                    ent:SetSchedule(SCHED_FORCED_GO)
+                end
+            end
+
+            lyx.Logger:Log("Zeus cam formation move by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+    --[[
+        Zeus Cam - Spawn NPCs at cursor
+    ]]
+    lyx:NetAdd("gm3ZeusCam_spawnNPCs", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized Zeus spawn attempt by " .. ply:Nick(), 2)
+                return
+            end
+
+            local class = string.Trim(net.ReadString() or "")
+            local weapon = string.Trim(net.ReadString() or "")
+            local count = net.ReadUInt(6) or 0
+            local pos = net.ReadVector()
+            local ang = net.ReadAngle()
+            local relationship = string.lower(net.ReadString() or "hostile")
+
+            if class == "" or #class > 64 then
+                ply:ChatPrint("Invalid NPC class")
+                return
+            end
+
+            if count < 1 or count > 20 then
+                ply:ChatPrint("Invalid NPC count")
+                return
+            end
+
+            if not isvector(pos) or not isangle(ang) then
+                ply:ChatPrint("Invalid spawn position")
+                return
+            end
+            if #weapon > 64 then
+                weapon = ""
+            end
+
+            local spawned = 0
+            for i = 1, count do
+                local npc = ents.Create(class)
+                if not IsValid(npc) then
+                    continue
+                end
+
+                local offset = Vector((i % 5) * 24, math.floor((i - 1) / 5) * 24, 0)
+                npc:SetPos(pos + offset)
+                npc:SetAngles(ang)
+
+                if weapon ~= "" then
+                    npc:SetKeyValue("additionalequipment", weapon)
+                end
+
+                npc:Spawn()
+                npc:Activate()
+                spawned = spawned + 1
+
+                local disp = D_HT
+                if relationship == "friendly" then
+                    disp = D_LI
+                elseif relationship == "neutral" then
+                    disp = D_NU
+                end
+
+                for _, target in ipairs(player.GetAll()) do
+                    npc:AddEntityRelationship(target, disp, 99)
+                end
+            end
+
+            lyx.Logger:Log(string.format("Zeus cam spawned %d x %s by %s", spawned, class, ply:Nick()))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
     })
 
     --[[

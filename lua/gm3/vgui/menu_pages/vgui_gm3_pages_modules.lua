@@ -83,16 +83,37 @@ function PANEL:Init()
     self:CreateCategoryButtons()
 
     -- Module list container
-    self.ModuleContainer = vgui.Create("DPanel", self.ScrollPanel)
+    self.ModuleContainer = vgui.Create("DListLayout", self.ScrollPanel)
     self.ModuleContainer:Dock(TOP)
-    self.ModuleContainer:SetTall(lyx.Scale(2000)) -- Will adjust based on content
-    self.ModuleContainer.Paint = function() end
+    self.ModuleContainer:DockMargin(0, 0, 0, lyx.Scale(20))
+    self.ModuleContainer:SetTall(0)
+    self.ModuleContainer.PerformLayout = function(s)
+        s:SizeToChildren(false, true)
+    end
 
     -- Populate modules
     self:RefreshModules()
+
+    self.SyncHookID = "GM3.Modules.Sync." .. tostring(self)
+    hook.Add("GM3.DataSynced", self.SyncHookID, function()
+        if not IsValid(self) then return end
+        self:CategorizeModules()
+        self:FilterModules()
+        self.ReloadPending = false
+        if IsValid(self.ReloadButton) then
+            self.ReloadButton:SetEnabled(true)
+            self.ReloadButton:SetText("Reload Modules")
+        end
+    end)
 end
 
 function PANEL:CategorizeModules()
+    self.Modules = {}
+    if not gm3.tools or table.IsEmpty(gm3.tools) then
+        self.FilteredModules = {}
+        return
+    end
+
     for name, module in pairs(gm3.tools) do
         local category = "Utility" -- Default category
 
@@ -120,6 +141,11 @@ function PANEL:CategorizeModules()
 
     self.FilteredModules = table.Copy(self.Modules)
 end
+function PANEL:OnRemove()
+    if self.SyncHookID then
+        hook.Remove("GM3.DataSynced", self.SyncHookID)
+    end
+end
 
 function PANEL:CreateHeader()
     -- Search container
@@ -131,10 +157,21 @@ function PANEL:CreateHeader()
         draw.RoundedBox(6, 0, 0, w, h, Color(68, 68, 68, 100))
     end
 
+    self.ReloadButton = vgui.Create("lyx.TextButton2", searchContainer)
+    self.ReloadButton:Dock(RIGHT)
+    self.ReloadButton:SetWide(lyx.ScaleW(150))
+    self.ReloadButton:DockMargin(0, lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
+    self.ReloadButton:SetText("Reload Modules")
+    self.ReloadButton:SetFont("GM3.Modules.Category")
+    self.ReloadButton:SetBackgroundColor(Color(70, 130, 180))
+    self.ReloadButton.DoClick = function()
+        self:RequestModuleReload()
+    end
+
     -- Search entry using LYX TextEntry2
     self.SearchEntry = vgui.Create("lyx.TextEntry2", searchContainer)
     self.SearchEntry:Dock(FILL)
-    self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
+    self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(5), lyx.Scale(10))
     self.SearchEntry:SetPlaceholderText("Search modules...")
     -- lyx.TextEntry2 doesn't have SetFont or SetBackgroundColor, it uses its own styling
     self.SearchEntry.OnChange = function(s)
@@ -250,250 +287,397 @@ function PANEL:FilterModules()
 end
 
 function PANEL:RefreshModules()
-    -- Clear existing modules
-    if self.ModuleContainer then
-        for _, child in ipairs(self.ModuleContainer:GetChildren()) do
-            child:Remove()
-        end
+    if not IsValid(self.ModuleContainer) then return end
+
+    for _, child in ipairs(self.ModuleContainer:GetChildren()) do
+        child:Remove()
     end
 
-    -- Update count
     local count = table.Count(self.FilteredModules)
     local total = table.Count(self.Modules)
     self.CountLabel:SetText(string.format("Showing %d of %d modules", count, total))
 
-    -- Delay module creation slightly to ensure container is properly sized
-    timer.Simple(0.01, function()
-        if not IsValid(self) or not IsValid(self.ModuleContainer) then return end
+    local ordered = {}
+    for name, module in pairs(self.FilteredModules) do
+        table.insert(ordered, {name = name, data = module})
+    end
+    table.sort(ordered, function(a, b)
+        return tostring(a.name) < tostring(b.name)
+    end)
 
-        -- Create module panels
-        local y = 0
-        for name, module in pairs(self.FilteredModules) do
-            local modPanel = self:CreateModulePanel(module, self.ModuleContainer)
-            modPanel:SetPos(0, y)
-            y = y + modPanel:GetTall() + lyx.Scale(10)
+    for _, entry in ipairs(ordered) do
+        self:CreateModulePanel(entry.data, self.ModuleContainer)
+    end
+
+    self.ModuleContainer:InvalidateLayout(true)
+end
+
+function PANEL:RequestModuleReload()
+    if self.ReloadPending then return end
+    self.ReloadPending = true
+
+    if IsValid(self.ReloadButton) then
+        self.ReloadButton:SetEnabled(false)
+        self.ReloadButton:SetText("Reloading...")
+    end
+
+    net.Start("gm3:sync:request")
+    net.SendToServer()
+
+    -- Safety timeout in case we never hear back
+    timer.Simple(3, function()
+        if not IsValid(self) or not self.ReloadPending then return end
+        self.ReloadPending = false
+        if IsValid(self.ReloadButton) then
+            self.ReloadButton:SetEnabled(true)
+            self.ReloadButton:SetText("Reload Modules")
         end
-
-        -- Adjust container height
-        self.ModuleContainer:SetTall(y)
     end)
 end
 
 function PANEL:CreateModulePanel(module, parent)
     local panel = vgui.Create("DPanel", parent)
-    -- Use scroll panel width if parent width is 0
-    local panelWidth = parent:GetWide()
-    if panelWidth <= 0 then
-        panelWidth = self.ScrollPanel:GetWide() - lyx.ScaleW(20)
+    panel:Dock(TOP)
+    panel:DockMargin(0, 0, 0, lyx.Scale(12))
+    panel:DockPadding(lyx.Scale(16), lyx.Scale(16), lyx.Scale(16), lyx.Scale(16))
+    panel.PerformLayout = function(s)
+        s:SizeToChildren(false, true)
     end
-    panel:SetSize(panelWidth - lyx.Scale(10), lyx.Scale(200))
 
-    -- Count arguments to determine panel height
-    local argCount = module.data.args and table.Count(module.data.args) or 0
-    local panelHeight = lyx.Scale(120 + (argCount * 35))
-    panel:SetTall(panelHeight)
-
-    -- Get category color
     local categoryColor = CATEGORY_COLORS[module.category] or Color(100, 100, 100)
+    local iconId = CATEGORY_ICONS[module.category]
 
     panel.Paint = function(s, w, h)
-        -- Background matching other components
-        draw.RoundedBox(4, 0, 0, w, h, Color(94, 88, 88, 50))
-
-        -- Category color indicator stripe on the left
-        draw.RoundedBoxEx(4, 0, 0, lyx.Scale(4), h, categoryColor, true, false, true, false)
-
-        -- Category indicator line
-        local catIcon = CATEGORY_ICONS[module.category]
-        if catIcon then
-            -- Draw icon with category color tint
-            lyx.DrawImgur(lyx.Scale(10), lyx.Scale(10), lyx.Scale(24), lyx.Scale(24), catIcon, categoryColor)
+        lyx.DrawRoundedBox(8, 0, 0, w, h, Color(34, 34, 42, 230))
+        surface.SetDrawColor(categoryColor)
+        surface.DrawRect(0, 0, 4, h)
+        if iconId then
+            lyx.DrawImgur(lyx.Scale(8), lyx.Scale(8), lyx.Scale(24), lyx.Scale(24), iconId, categoryColor)
         end
     end
 
-    -- Module name
-    local nameLabel = vgui.Create("DLabel", panel)
-    nameLabel:SetPos(lyx.Scale(45), lyx.Scale(10))
+    local header = vgui.Create("DPanel", panel)
+    header:Dock(TOP)
+    header:SetTall(lyx.Scale(34))
+    header:DockMargin(iconId and lyx.Scale(36) or 0, 0, 0, lyx.Scale(4))
+    header.Paint = nil
+
+    local nameLabel = vgui.Create("DLabel", header)
+    nameLabel:Dock(FILL)
     nameLabel:SetFont("GM3.Modules.Title")
     nameLabel:SetText(module.data.name or module.name)
-    nameLabel:SetTextColor(Color(255, 255, 255))
-    nameLabel:SizeToContents()
+    nameLabel:SetTextColor(color_white)
+    nameLabel:SetContentAlignment(4)
 
-    -- Category label with color coding
-    local catLabel = vgui.Create("DLabel", panel)
-    catLabel:SetPos(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(10))
-    catLabel:SetFont("GM3.Modules.Normal")
-    catLabel:SetText(module.category)
-    catLabel:SetTextColor(categoryColor)
-    catLabel:SizeToContents()
+    local badge = vgui.Create("DLabel", header)
+    badge:Dock(RIGHT)
+    badge:SetFont("GM3.Modules.Category")
+    badge:SetText(module.category)
+    badge:SetTextColor(categoryColor)
+    badge:SetContentAlignment(6)
+    badge:SetWide(lyx.ScaleW(180))
 
-    -- Description
+    local meta = vgui.Create("DLabel", panel)
+    meta:Dock(TOP)
+    meta:SetFont("GM3.Modules.Normal")
+    meta:SetTextColor(Color(200, 200, 200))
+    local argCount = table.Count(module.data.args or {})
+    local metaParts = {
+        module.data.author and ("Author: " .. module.data.author),
+        argCount > 0 and (argCount .. " parameters") or "No parameters"
+    }
+    meta:SetText(table.concat(metaParts, "  •  "))
+    meta:SizeToContents()
+
     local desc = vgui.Create("DLabel", panel)
-    desc:SetPos(lyx.Scale(15), lyx.Scale(40))
-    desc:SetSize(panel:GetWide() - lyx.Scale(30), lyx.Scale(40))
+    desc:Dock(TOP)
+    desc:DockMargin(0, lyx.Scale(6), 0, lyx.Scale(6))
     desc:SetFont("GM3.Modules.Normal")
-    desc:SetText(module.data.description or "No description")
-    desc:SetTextColor(Color(255, 255, 255, 180))
+    desc:SetTextColor(Color(220, 220, 220))
     desc:SetWrap(true)
     desc:SetAutoStretchVertical(true)
+    desc:SetText(module.data.description or "No description provided.")
 
-    -- Arguments
+    local argsContainer = vgui.Create("DPanel", panel)
+    argsContainer:Dock(TOP)
+    argsContainer:DockMargin(0, lyx.Scale(6), 0, 0)
+    argsContainer.Paint = nil
+    argsContainer.PerformLayout = function(s)
+        s:SizeToChildren(false, true)
+    end
+
+    local argsList = vgui.Create("DListLayout", argsContainer)
+    argsList:Dock(TOP)
+    argsList.PerformLayout = function(s)
+        s:SizeToChildren(false, true)
+    end
+
     local args = {}
-    local argY = lyx.Scale(85)
 
-    if module.data.args then
-        for k, v in pairs(module.data.args) do
-            if v.type == "string" then
-                local entry = vgui.Create("lyx.TextEntry2", panel)
-                entry:SetPos(lyx.Scale(15), argY)
-                entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
-                entry:SetPlaceholderText(v.name or v.def or "Text")
-                entry:SetValue(v.def or "")
-                args[k] = v.def or ""
+    local function addField(argKey, data, parentList)
+        local field = parentList:Add("DPanel")
+        field:Dock(TOP)
+        field:SetTall(lyx.Scale(74))
+        field:DockMargin(0, 0, 0, lyx.Scale(8))
+        field.Paint = function(s, w, h)
+            lyx.DrawRoundedBox(6, 0, 0, w, h, Color(45, 45, 52, 200))
+        end
 
-                entry.OnChange = function(s)
-                    args[k] = s:GetValue()
+        local label = vgui.Create("DLabel", field)
+        label:Dock(TOP)
+        label:SetFont("GM3.Modules.Category")
+        label:SetText(data.label or data.name or argKey)
+        label:SetTextColor(color_white)
+        label:SetContentAlignment(4)
+
+        if data.description then
+            local help = vgui.Create("DLabel", field)
+            help:Dock(TOP)
+            help:DockMargin(0, lyx.Scale(2), 0, lyx.Scale(6))
+            help:SetFont("GM3.Modules.Normal")
+            help:SetTextColor(Color(190, 190, 190))
+            help:SetWrap(true)
+            help:SetAutoStretchVertical(true)
+            help:SetText(data.description)
+        end
+
+        local inputHolder = vgui.Create("DPanel", field)
+        inputHolder:Dock(FILL)
+        inputHolder:DockMargin(0, 0, 0, lyx.Scale(4))
+        inputHolder.Paint = nil
+
+        local inputHeight = lyx.Scale(32)
+
+        local function applyEntryDefaults(entryPanel)
+            entryPanel:Dock(FILL)
+            entryPanel:SetTall(inputHeight)
+        end
+
+        if data.options and istable(data.options) and #data.options > 0 then
+            local combo = vgui.Create("lyx.ComboBox2", inputHolder)
+            combo:SetSortItems(false)
+            combo:SetSizeToText(false)
+            combo:SetTall(inputHeight)
+            applyEntryDefaults(combo)
+
+            local defaultValue = data.def
+            if not defaultValue and data.options[1] then
+                defaultValue = data.options[1].value
+            end
+            args[argKey] = defaultValue
+
+            for _, option in ipairs(data.options) do
+                combo:AddChoice(option.label or option.value, option.value, option.value == defaultValue)
+            end
+
+            combo.OnSelect = function(_, _, _, val)
+                args[argKey] = val
+            end
+
+        elseif data.type == "string" then
+            local entry = vgui.Create("lyx.TextEntry2", inputHolder)
+            applyEntryDefaults(entry)
+            entry:SetPlaceholderText(data.placeholder or data.def or "Enter value")
+            entry:SetValue(data.def or "")
+            args[argKey] = data.def or ""
+
+            entry.OnChange = function(s)
+                args[argKey] = s:GetValue()
+            end
+
+        elseif data.type == "number" then
+            local entry = vgui.Create("lyx.TextEntry2", inputHolder)
+            applyEntryDefaults(entry)
+            entry:SetPlaceholderText(data.placeholder or tostring(data.def or 0))
+            entry:SetValue(tostring(data.def or 0))
+            entry:SetNumeric(true)
+            args[argKey] = tonumber(data.def) or 0
+
+            entry.OnChange = function(s)
+                args[argKey] = tonumber(s:GetValue()) or 0
+            end
+
+        elseif data.type == "boolean" then
+            local check = vgui.Create("lyx.Checkbox2", inputHolder)
+            check:Dock(LEFT)
+            check:SetWide(inputHeight)
+            check:SetToggle(data.def or false)
+            args[argKey] = data.def or false
+
+            check.OnToggled = function(_, val)
+                args[argKey] = val
+            end
+
+        elseif data.type == "player" then
+            local playerBtn = vgui.Create("lyx.TextButton2", inputHolder)
+            applyEntryDefaults(playerBtn)
+            playerBtn:SetText("Select Player")
+            playerBtn:SetFont("GM3.Modules.Normal")
+            args[argKey] = data.def or ""
+
+            local function updateButtonText()
+                if args[argKey] == "" then
+                    playerBtn:SetText("Select Player")
+                    playerBtn:SetBackgroundColor(Color(80, 80, 80))
+                    return
                 end
 
-                argY = argY + lyx.Scale(35)
-
-            elseif v.type == "number" then
-                local entry = vgui.Create("lyx.TextEntry2", panel)
-                entry:SetPos(lyx.Scale(15), argY)
-                entry:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
-                entry:SetPlaceholderText(v.name or tostring(v.def) or "Number")
-                entry:SetValue(tostring(v.def or 0))
-                entry:SetNumeric(true)
-                args[k] = tonumber(v.def) or 0
-
-                entry.OnChange = function(s)
-                    args[k] = tonumber(s:GetValue()) or 0
-                end
-
-                argY = argY + lyx.Scale(35)
-
-            elseif v.type == "boolean" then
-                local check = vgui.Create("lyx.Checkbox2", panel)
-                check:SetPos(lyx.Scale(15), argY)
-                check:SetSize(lyx.Scale(25), lyx.Scale(25))
-                check:SetToggle(v.def or false)
-                args[k] = v.def or false
-
-                local checkLabel = vgui.Create("DLabel", panel)
-                checkLabel:SetPos(lyx.Scale(45), argY)
-                checkLabel:SetFont("GM3.Modules.Normal")
-                checkLabel:SetText(v.name or "Enabled")
-                checkLabel:SetTextColor(Color(255, 255, 255, 180))
-                checkLabel:SizeToContents()
-
-                check.OnValueChange = function(s, val)
-                    args[k] = val
-                end
-
-                argY = argY + lyx.Scale(35)
-
-            elseif v.type == "player" then
-                -- Player selector button
-                local playerBtn = vgui.Create("lyx.TextButton2", panel)
-                playerBtn:SetPos(lyx.Scale(15), argY)
-                playerBtn:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
-                playerBtn:SetText(v.name or "Select Player")
-                playerBtn:SetFont("GM3.Modules.Normal")
-                playerBtn:SetBackgroundColor(Color(80, 80, 80))
-
-                -- Store default value (SteamID)
-                args[k] = v.def or ""
-                local selectedName = "No player selected"
-
-                -- If default is provided, try to find the player
-                if v.def and v.def ~= "" then
-                    for _, ply in ipairs(player.GetAll()) do
-                        if ply:SteamID() == v.def then
-                            selectedName = ply:Nick()
-                            break
-                        end
+                local name = args[argKey]
+                for _, ply in ipairs(player.GetAll()) do
+                    if ply:SteamID() == args[argKey] then
+                        name = ply:Nick()
+                        break
                     end
                 end
+                playerBtn:SetText(name)
+                playerBtn:SetBackgroundColor(Color(50, 100, 50))
+            end
 
-                playerBtn:SetText(selectedName)
+            updateButtonText()
 
-                playerBtn.DoClick = function()
-                    local selector = vgui.Create("GM3.PlayerSelector")
-                    selector.OnPlayerSelected = function(s, ply)
-                        args[k] = ply:SteamID()
-                        playerBtn:SetText(ply:Nick())
-                        playerBtn:SetBackgroundColor(Color(50, 100, 50))
+            playerBtn.DoClick = function()
+                local selector = vgui.Create("GM3.PlayerSelector")
+                selector.OnPlayerSelected = function(_, ply)
+                    args[argKey] = ply:SteamID()
+                    updateButtonText()
+                end
+            end
+
+        elseif data.type == "color" then
+            local colorBtn = vgui.Create("lyx.TextButton2", inputHolder)
+            applyEntryDefaults(colorBtn)
+
+            local defaultColor = data.def or Color(100, 100, 100)
+            if isstring(data.def) then
+                local parts = string.Explode(",", data.def)
+                if #parts == 3 then
+                    defaultColor = Color(tonumber(parts[1]) or 100, tonumber(parts[2]) or 100, tonumber(parts[3]) or 100)
+                end
+            end
+
+            args[argKey] = defaultColor
+            colorBtn:SetBackgroundColor(defaultColor)
+            colorBtn:SetText(string.format("RGB(%d, %d, %d)", defaultColor.r, defaultColor.g, defaultColor.b))
+
+            colorBtn.DoClick = function()
+                local selector = vgui.Create("GM3.ColorSelector")
+                selector:SetColor(args[argKey])
+                selector.OnColorSelected = function(_, color)
+                    args[argKey] = color
+                    colorBtn:SetBackgroundColor(color)
+                    colorBtn:SetText(string.format("RGB(%d, %d, %d)", color.r, color.g, color.b))
+
+                    local brightness = (color.r * 0.299 + color.g * 0.587 + color.b * 0.114)
+                    if brightness < 128 then
+                        colorBtn:SetTextColor(color_white)
+                    else
+                        colorBtn:SetTextColor(Color(0, 0, 0))
                     end
                 end
+            end
+        else
+            args[argKey] = data.def
+        end
 
-                argY = argY + lyx.Scale(35)
+        return field
+    end
 
-            elseif v.type == "color" then
-                -- Color selector button
-                local colorBtn = vgui.Create("lyx.TextButton2", panel)
-                colorBtn:SetPos(lyx.Scale(15), argY)
-                colorBtn:SetSize(panel:GetWide() - lyx.ScaleW(150), lyx.Scale(30))
-                colorBtn:SetText("Select Color")
-                colorBtn:SetFont("GM3.Modules.Normal")
+    local rawArgs = module.data.args or {}
+    if table.IsEmpty(rawArgs) then
+        local empty = argsList:Add("DLabel")
+        empty:SetTall(lyx.Scale(28))
+        empty:SetFont("GM3.Modules.Normal")
+        empty:SetTextColor(Color(200, 200, 200))
+        empty:SetText("This module does not require any parameters.")
+    else
+        local orderedArgs = {}
+        for key, data in pairs(rawArgs) do
+            local argData = table.Copy(data)
+            argData.__key = key
+            table.insert(orderedArgs, argData)
+        end
 
-                -- Store default color
-                local defaultColor = v.def or Color(100, 100, 100)
-                if type(v.def) == "string" then
-                    -- Parse string format "r,g,b"
-                    local parts = string.Explode(",", v.def)
-                    if #parts == 3 then
-                        defaultColor = Color(tonumber(parts[1]) or 100, tonumber(parts[2]) or 100, tonumber(parts[3]) or 100)
-                    end
-                end
+        table.sort(orderedArgs, function(a, b)
+            if a.order and b.order then
+                return a.order < b.order
+            elseif a.order then
+                return true
+            elseif b.order then
+                return false
+            end
+            return tostring(a.__key) < tostring(b.__key)
+        end)
 
-                args[k] = defaultColor
-                colorBtn:SetBackgroundColor(defaultColor)
+        local sections = {}
+        local sectionOrder = {}
 
-                -- Update button text with color values
-                colorBtn:SetText(string.format("RGB(%d, %d, %d)", defaultColor.r, defaultColor.g, defaultColor.b))
+        for _, data in ipairs(orderedArgs) do
+            local sectionName = data.section or "General"
+            if not sections[sectionName] then
+                sections[sectionName] = {}
+                table.insert(sectionOrder, {
+                    name = sectionName,
+                    order = data.sectionOrder or data.order or (#sectionOrder + 1)
+                })
+            end
+            table.insert(sections[sectionName], data)
+        end
 
-                colorBtn.DoClick = function()
-                    local selector = vgui.Create("GM3.ColorSelector")
-                    selector:SetColor(args[k])
-                    selector.OnColorSelected = function(s, color)
-                        args[k] = color
-                        colorBtn:SetBackgroundColor(color)
-                        colorBtn:SetText(string.format("RGB(%d, %d, %d)", color.r, color.g, color.b))
+        table.sort(sectionOrder, function(a, b)
+            if a.order ~= b.order then
+                return a.order < b.order
+            end
+            return a.name < b.name
+        end)
 
-                        -- Ensure text is visible
-                        local brightness = (color.r * 0.299 + color.g * 0.587 + color.b * 0.114)
-                        if brightness < 128 then
-                            colorBtn:SetTextColor(Color(255, 255, 255))
-                        else
-                            colorBtn:SetTextColor(Color(0, 0, 0))
-                        end
-                    end
-                end
+        for _, section in ipairs(sectionOrder) do
+            local headerLabel = argsList:Add("DLabel")
+            headerLabel:SetTall(lyx.Scale(28))
+            headerLabel:SetFont("GM3.Modules.Category")
+            headerLabel:SetTextColor(color_white)
+            headerLabel:SetText(section.name)
 
-                argY = argY + lyx.Scale(35)
+            for _, data in ipairs(sections[section.name]) do
+                addField(data.__key, data, argsList)
             end
         end
     end
 
-    -- Run button with category color
-    local runBtn = vgui.Create("lyx.TextButton2", panel)
-    runBtn:SetPos(panel:GetWide() - lyx.ScaleW(120), lyx.Scale(40))
-    runBtn:SetSize(lyx.ScaleW(100), lyx.Scale(35))
-    runBtn:SetText("Run")
+    local footer = vgui.Create("DPanel", panel)
+    footer:Dock(TOP)
+    footer:SetTall(lyx.Scale(40))
+    footer:DockMargin(0, lyx.Scale(10), 0, 0)
+    footer.Paint = nil
+    footer.PerformLayout = function(s)
+        s:SizeToChildren(false, true)
+    end
+
+    local runBtn = vgui.Create("lyx.TextButton2", footer)
+    runBtn:Dock(RIGHT)
+    runBtn:SetWide(lyx.ScaleW(150))
+    runBtn:SetText("Run Module")
     runBtn:SetFont("GM3.Modules.Category")
-    runBtn:SetBackgroundColor(Color(categoryColor.r * 0.6, categoryColor.g * 0.6, categoryColor.b * 0.6))
+    runBtn:SetBackgroundColor(Color(categoryColor.r * 0.7, categoryColor.g * 0.7, categoryColor.b * 0.7))
 
     runBtn.DoClick = function()
         surface.PlaySound("buttons/button15.wav")
-
         net.Start("gm3:tool:run")
         net.WriteString(module.data.name)
         net.WriteTable(args)
         net.SendToServer()
-
-        -- Feedback
         notification.AddLegacy("Running: " .. module.data.name, NOTIFY_GENERIC, 3)
     end
+
+    local hint = vgui.Create("DLabel", footer)
+    hint:Dock(FILL)
+    hint:DockMargin(0, 0, lyx.Scale(12), 0)
+    hint:SetFont("GM3.Modules.Normal")
+    hint:SetTextColor(Color(200, 200, 200))
+    hint:SetContentAlignment(4)
+    hint:SetText("Ensure parameters are set before running. Changes apply immediately.")
+
+    panel:InvalidateLayout(true)
+    panel:SizeToChildren(false, true)
 
     return panel
 end

@@ -32,6 +32,8 @@ do
             gm3.Logger:Log("Server sync complete - Tools: " .. table.Count(gm3.tools) ..
                           ", Ranks: " .. table.Count(gm3.ranks) ..
                           ", Commands: " .. table.Count(gm3.commands))
+
+            hook.Run("GM3.DataSynced", gm3.tools, gm3.ranks, gm3.commands, gm3.settings)
         end
     })
     
@@ -149,3 +151,15 @@ do
 end
 
 gm3.Logger:Log("GM3 client-side network messages initialized")
+
+concommand.Add("gm3_print_tools", function()
+    local tools = gm3 and gm3.tools or {}
+    local count = table.Count(tools)
+    print("[GM3] Client tool count: " .. count)
+    if count == 0 then
+        print("[GM3] No tools loaded on client.")
+        return
+    end
+
+    PrintTable(tools)
+end)

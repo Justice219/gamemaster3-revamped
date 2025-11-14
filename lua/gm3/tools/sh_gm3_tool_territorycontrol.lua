@@ -24,71 +24,171 @@ if SERVER then
         {
             ["Action"] = {
                 type = "string",
-                def = "create" -- create, remove, list, reset_all, set_faction
+                def = "create",
+                label = "Action",
+                description = "Choose how you want to manage territories.",
+                options = {
+                    {label = "Create or update a territory", value = "create"},
+                    {label = "Remove territory", value = "remove"},
+                    {label = "List active territories", value = "list"},
+                    {label = "Reset all territories", value = "reset_all"},
+                    {label = "Set controlling faction", value = "set_faction"}
+                },
+                section = "General",
+                sectionOrder = 1,
+                order = 1
             },
             ["Territory Name"] = {
                 type = "string",
-                def = "Alpha Zone" -- Name of the territory
+                def = "Alpha Zone",
+                label = "Territory Name",
+                description = "Human-readable identifier used for updates and removals.",
+                placeholder = "Example: Alpha Zone",
+                section = "General",
+                sectionOrder = 1,
+                order = 2
             },
             ["Zone Center"] = {
                 type = "string",
-                def = "cursor" -- cursor, player_pos, coordinates (x,y,z)
+                def = "cursor",
+                label = "Zone Origin",
+                description = "cursor = crosshair, player_pos = your current location, or supply XYZ coordinates.",
+                placeholder = "cursor / player_pos / 123 456 789",
+                section = "Placement",
+                sectionOrder = 2,
+                order = 3
             },
             ["Zone Radius"] = {
                 type = "number",
-                def = 500 -- Radius in units
+                def = 500,
+                label = "Zone Radius",
+                description = "Radius in Hammer units around the zone center.",
+                section = "Placement",
+                sectionOrder = 2,
+                order = 4
             },
             ["Zone Height"] = {
                 type = "number",
-                def = 200 -- Height of the zone cylinder
+                def = 200,
+                label = "Zone Height",
+                description = "Vertical height of the capture cylinder.",
+                section = "Placement",
+                sectionOrder = 2,
+                order = 5
             },
             ["Controlling Faction"] = {
                 type = "string",
-                def = "Neutral" -- Faction name or team name
+                def = "Neutral",
+                label = "Controlling Faction",
+                description = "Team or faction name displayed to players.",
+                placeholder = "e.g. CIS, Republic",
+                section = "Ownership",
+                sectionOrder = 3,
+                order = 6
             },
             ["Faction Color"] = {
                 type = "color",
-                def = Color(100, 100, 100) -- Default gray color
+                def = Color(100, 100, 100),
+                label = "Faction Color",
+                description = "Color used for the HUD badge and zone outline.",
+                section = "Ownership",
+                sectionOrder = 3,
+                order = 7
             },
             ["Capture Time"] = {
                 type = "number",
-                def = 60 -- Seconds to capture
+                def = 60,
+                label = "Capture Time (seconds)",
+                description = "How long it takes to capture when requirements are met.",
+                section = "Capture Rules",
+                sectionOrder = 4,
+                order = 8
             },
             ["Required Players"] = {
                 type = "number",
-                def = 2 -- Minimum players to start capture
+                def = 2,
+                label = "Required Players",
+                description = "Minimum players from a faction required to start capturing.",
+                section = "Capture Rules",
+                sectionOrder = 4,
+                order = 9
             },
             ["Capture Mode"] = {
                 type = "string",
-                def = "contested" -- contested, majority, exclusive
+                def = "contested",
+                label = "Capture Mode",
+                description = "Contested = tug of war, Majority = most players wins, Exclusive = uncontested only.",
+                options = {
+                    {label = "Contested (default)", value = "contested"},
+                    {label = "Majority ownership", value = "majority"},
+                    {label = "Exclusive control", value = "exclusive"}
+                },
+                section = "Capture Rules",
+                sectionOrder = 4,
+                order = 10
             },
             ["Show Boundaries"] = {
                 type = "boolean",
-                def = true -- Show visual zone boundaries
+                def = true,
+                label = "Show 3D Boundaries",
+                description = "Enable in-world outlines so everyone can see the capture zone.",
+                section = "HUD & Feedback",
+                sectionOrder = 5,
+                order = 11
             },
             ["Show HUD Info"] = {
                 type = "boolean",
-                def = true -- Show territory info on HUD
+                def = true,
+                label = "Show HUD Info",
+                description = "Displays an on-screen widget when players are inside the territory.",
+                section = "HUD & Feedback",
+                sectionOrder = 5,
+                order = 12
             },
             ["Award Points"] = {
                 type = "boolean",
-                def = true -- Give points for holding territories
+                def = true,
+                label = "Award Points Over Time",
+                description = "Give faction points each minute while they hold the territory.",
+                section = "Capture Rules",
+                sectionOrder = 4,
+                order = 13
             },
             ["Points Per Minute"] = {
                 type = "number",
-                def = 10 -- Points awarded per minute of control
+                def = 10,
+                label = "Points Per Minute",
+                description = "Only used when Award Points is enabled.",
+                section = "Capture Rules",
+                sectionOrder = 4,
+                order = 14
             },
             ["Notify On Capture"] = {
                 type = "boolean",
-                def = true -- Global notification when captured
+                def = true,
+                label = "Broadcast Captures",
+                description = "Send a global chat notification when territory ownership changes.",
+                section = "HUD & Feedback",
+                sectionOrder = 5,
+                order = 15
             },
             ["Allow Vehicles"] = {
                 type = "boolean",
-                def = true -- Count players in vehicles
+                def = true,
+                label = "Count Players In Vehicles",
+                description = "If disabled, only players on foot contribute to capture progress.",
+                section = "Advanced",
+                sectionOrder = 6,
+                order = 16
             },
             ["Spawn Protection"] = {
                 type = "boolean",
-                def = false -- Protect spawning players in territory
+                def = false,
+                label = "Spawn Protection",
+                description = "Grant brief god mode to players spawning inside protected territories.",
+                section = "Advanced",
+                sectionOrder = 6,
+                order = 17
             }
         },
         function(ply, args)
