@@ -55,7 +55,97 @@ do
     local GM3_PatrolControllers = GM3_PatrolControllers or {}
     local GM3_DefenseZones = GM3_DefenseZones or {}
     local GM3_SupplyCrates = GM3_SupplyCrates or {}
+    local GM3_ReconSensors = GM3_ReconSensors or {}
     local vector_origin = vector_origin or Vector(0, 0, 0)
+    local function GM3_GetSafeSpawnPos(pos)
+        local hullTrace = util.TraceHull({
+            start = pos + Vector(0, 0, 72),
+            endpos = pos - Vector(0, 0, 128),
+            mins = Vector(-16, -16, 0),
+            maxs = Vector(16, 16, 72),
+            mask = MASK_SOLID
+        })
+
+        if hullTrace.Hit then
+            return hullTrace.HitPos + hullTrace.HitNormal * 24
+        end
+
+        local lineTrace = util.TraceLine({
+            start = pos + Vector(0, 0, 120),
+            endpos = pos - Vector(0, 0, 256),
+            mask = MASK_SOLID
+        })
+
+        if lineTrace.Hit then
+            return lineTrace.HitPos + lineTrace.HitNormal * 24
+        end
+
+        return pos + Vector(0, 0, 24)
+    end
+
+    local GM3_SupplyTypes = {
+        ammo = {
+            model = "models/items/ammocrate_ar2.mdl",
+            uses = 3,
+            apply = function(ply)
+                ply:GiveAmmo(60, "SMG1", true)
+                ply:GiveAmmo(30, "AR2", true)
+                ply:GiveAmmo(6, "Buckshot", true)
+                ply:EmitSound("items/ammo_pickup.wav")
+            end
+        },
+        medical = {
+            model = "models/Items/HealthKit.mdl",
+            uses = 3,
+            apply = function(ply)
+                local maxHealth = ply:GetMaxHealth() or 100
+                ply:SetHealth(math.min(maxHealth, ply:Health() + 60))
+                ply:SetArmor(math.min(100, ply:Armor() + 20))
+                ply:EmitSound("items/smallmedkit1.wav")
+            end
+        },
+        tech = {
+            model = "models/Items/combine_rifle_cartridge01.mdl",
+            uses = 2,
+            apply = function(ply)
+                ply:Give("weapon_frag")
+                ply:Give("weapon_slam")
+                ply:EmitSound("items/ammo_pickup.wav")
+            end
+        },
+        shield = {
+            model = "models/Items/battery.mdl",
+            uses = 2,
+            apply = function(ply)
+                ply:SetArmor(math.min(150, ply:Armor() + 75))
+                ply:EmitSound("items/battery_pickup.wav")
+            end
+        },
+        turret = {
+            model = "models/props_combine/combine_mortar01a.mdl",
+            uses = 1,
+            apply = function(ply, ent)
+                local turret = ents.Create("npc_turret_floor")
+                if not IsValid(turret) then return true end
+                turret:SetPos(ent:GetPos() + Vector(0, 0, 4))
+                turret:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+                turret:Spawn()
+                turret:Activate()
+                turret:AddRelationship("player D_LI 99")
+                turret:SetKeyValue("spawnflags", "512")
+                ply:EmitSound("npc/turret_floor/deploy.wav")
+                return true
+            end
+        }
+    }
+
+    local GM3_SignalColors = {
+        [0] = Color(255, 200, 80),
+        [1] = Color(255, 80, 80),
+        [2] = Color(100, 200, 255),
+        [3] = Color(140, 255, 160),
+        [4] = Color(190, 150, 255)
+    }
 
     local function GM3_CreateSmokeScreen(pos, radius, duration)
         local effectData = EffectData()
@@ -90,33 +180,96 @@ do
         end)
     end
 
+    local function GM3_BroadcastArtilleryPreview(ply, pos, radius, delay, profileName)
+        net.Start("gm3ZeusCam_artilleryPreview")
+            net.WriteVector(pos)
+            net.WriteUInt(math.Clamp(math.floor(radius), 50, 1023), 12)
+            net.WriteFloat(math.max(delay, 0))
+            net.WriteString(profileName or "default")
+        net.Broadcast()
+    end
+
     local FireSupportImpactConfig = {
         precision = {
             effect = "Explosion",
             sound = "weapons/explode3.wav",
             damage = 240,
-            radiusMul = 0.3,
+            radiusMul = 0.45,
             scorch = true,
-            screenShake = 4
+            screenShake = 6,
+            warning = 5,
+            customEffect = "gm3_artilleryblast",
+            customEffectScale = 1.2,
+            customEffectColor = Color(255, 250, 220)
         },
         barrage = {
             effect = "HelicopterMegaBomb",
             sound = "ambient/explosions/explode_9.wav",
             damage = 160,
-            radiusMul = 0.45,
+            radiusMul = 0.65,
             scorch = true,
-            screenShake = 6
+            effect2 = "Explosion",
+            screenShake = 8,
+            warning = 8,
+            customEffect = "gm3_artilleryblast",
+            customEffectScale = 1.8,
+            customEffectColor = Color(255, 190, 120)
         },
         carpet = {
-            effect = "Explosion",
+            effect = "HelicopterMegaBomb",
+            effect2 = "Explosion",
+            effectScale = 2.8,
+            effect2Scale = 1.5,
+            customEffect = "gm3_artilleryblast",
+            customEffectScale = 2.6,
+            customEffectColor = Color(255, 140, 80),
             sound = "ambient/explosions/explode_6.wav",
             damage = 130,
-            radiusMul = 0.6,
+            radiusMul = 0.85,
             scorch = true,
             sparks = true,
-            screenShake = 7
+            screenShake = 9,
+            warning = 10
+        },
+        incendiary = {
+            effect = "Explosion",
+            sound = "ambient/fire/ignite.wav",
+            damage = 40,
+            radiusMul = 0.55,
+            scorch = true,
+            ignite = true,
+            screenShake = 4,
+            warning = 7,
+            customEffect = "gm3_artilleryblast",
+            customEffectScale = 1.6,
+            customEffectColor = Color(255, 140, 40)
+        },
+        emp = {
+            effect = "cball_explode",
+            sound = "ambient/energy/newspark04.wav",
+            damage = 10,
+            radiusMul = 0.6,
+            shock = true,
+            screenShake = 6,
+            warning = 6,
+            customEffect = "gm3_artilleryblast",
+            customEffectScale = 1.4,
+            customEffectColor = Color(160, 200, 255)
         }
     }
+
+    local function GM3_PlayImpactEffect(name, pos, scale, color)
+        if not name then return end
+        local effect = EffectData()
+        effect:SetOrigin(pos)
+        if scale then
+            effect:SetScale(scale)
+        end
+        if color then
+            effect:SetAngles(Angle(color.r or 255, color.g or 255, color.b or 255))
+        end
+        util.Effect(name, effect, true, true)
+    end
 
     local function GM3_HandleArtilleryImpact(ply, pos, radius, profileName, isSmoke)
         if isSmoke then
@@ -129,11 +282,16 @@ do
         local blastRadius = radius * (config.radiusMul or 0.4)
         util.BlastDamage(ply, ply, pos, blastRadius, config.damage or 150)
 
-        local effect = EffectData()
-        effect:SetOrigin(pos)
-        util.Effect(config.effect or "Explosion", effect, true, true)
+        local baseScale = math.Clamp(blastRadius / 100, 0.6, 3.5)
+        GM3_PlayImpactEffect(config.effect or "Explosion", pos, config.effectScale or baseScale)
         if config.sparks then
-            util.Effect("cball_explode", effect, true, true)
+            GM3_PlayImpactEffect("cball_explode", pos, baseScale + 0.3)
+        end
+        if config.effect2 then
+            GM3_PlayImpactEffect(config.effect2, pos, config.effect2Scale or baseScale * 0.8)
+        end
+        if config.customEffect then
+            GM3_PlayImpactEffect(config.customEffect, pos, config.customEffectScale or (baseScale * 1.5), config.customEffectColor)
         end
 
         util.ScreenShake(pos, config.screenShake or 5, 5, 1.5, radius * 3)
@@ -141,6 +299,86 @@ do
             util.Decal("Scorch", pos + Vector(0, 0, 12), pos - Vector(0, 0, 12))
         end
         sound.Play(config.sound or "ambient/explosions/explode_4.wav", pos, 120, 100)
+
+        if config.ignite or config.shock then
+            for _, ent in ipairs(ents.FindInSphere(pos, blastRadius)) do
+                if not IsValid(ent) then continue end
+                if config.ignite and (ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()) then
+                    ent:Ignite(5, 30)
+                end
+                if config.shock and ent:IsPlayer() then
+                    ent:EmitSound("ambient/energy/zap1.wav")
+                    local dmg = DamageInfo()
+                    dmg:SetDamage(5)
+                    dmg:SetDamageType(DMG_SHOCK)
+                    dmg:SetAttacker(IsValid(ply) and ply or game.GetWorld())
+                    ent:TakeDamageInfo(dmg)
+                    ent:ViewPunch(Angle(math.Rand(-4, 4), math.Rand(-6, 6), 0))
+                    ent:ScreenFade(SCREENFADE.MODULATE, Color(150, 200, 255, 120), 0.3, 0.3)
+                end
+            end
+        end
+    end
+
+    local function GM3_GatherReconContacts(origin, radius, reference)
+        local contacts = {}
+        for _, ent in ipairs(ents.FindInSphere(origin, radius)) do
+            if not IsValid(ent) then continue end
+            if ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot() then
+                local velocity = ent.GetVelocity and ent:GetVelocity() or vector_origin
+                local dir = velocity:GetNormalized()
+                if dir.x ~= dir.x or dir.y ~= dir.y or dir.z ~= dir.z then
+                    dir = vector_origin
+                end
+                local friendly = false
+                if ent:IsPlayer() and IsValid(reference) and reference:IsPlayer() then
+                    friendly = ent:Team() == reference:Team()
+                elseif ent:IsNPC() and IsValid(reference) and reference:IsPlayer() and ent.Disposition then
+                    friendly = ent:Disposition(reference) ~= D_HT
+                end
+                table.insert(contacts, {
+                    pos = ent:WorldSpaceCenter(),
+                    type = ent:IsPlayer() and "player" or "npc",
+                    class = ent:GetClass(),
+                    label = ent:IsPlayer() and ent:Nick() or ent:GetClass(),
+                    dir = dir,
+                    speed = velocity:Length(),
+                    friendly = friendly
+                })
+            elseif ent:GetClass() == "prop_physics" then
+                table.insert(contacts, {
+                    pos = ent:WorldSpaceCenter(),
+                    type = "prop",
+                    class = ent:GetClass(),
+                    label = "Prop",
+                    dir = vector_origin,
+                    speed = 0,
+                    friendly = false
+                })
+            end
+            if #contacts >= 32 then break end
+        end
+        return contacts
+    end
+
+    local function GM3_SendReconData(ply, origin, radius)
+        local contacts = GM3_GatherReconContacts(origin, radius, ply)
+        if not IsValid(ply) then return end
+        net.Start("gm3ZeusCam_reconData")
+            net.WriteVector(origin)
+            net.WriteUInt(radius, 12)
+            net.WriteUInt(#contacts, 8)
+            for _, contact in ipairs(contacts) do
+                net.WriteVector(contact.pos)
+                net.WriteString(contact.type or "")
+                net.WriteString(contact.class or "")
+                net.WriteString(contact.label or "")
+                net.WriteVector(contact.dir or vector_origin)
+                net.WriteFloat(contact.speed or 0)
+                net.WriteBool(contact.friendly or false)
+            end
+        net.Send(ply)
+        return contacts
     end
 
     function gm3:RemoveFromTable(tbl, valueToRemove)
@@ -1032,6 +1270,7 @@ do
             local shells = net.ReadUInt(4) or 0
             local delay = net.ReadFloat() or 0.5
             local isSmoke = net.ReadBool()
+            local impactDelay = net.ReadFloat() or 0
             local profileName = net.ReadString() or ""
 
             if not isvector(position) then
@@ -1041,9 +1280,16 @@ do
             radius = math.Clamp(radius, 50, 600)
             shells = math.Clamp(shells, 1, 10)
             delay = math.Clamp(delay, 0.2, 2)
+            impactDelay = math.Clamp(impactDelay, 0, 120)
+            local config = FireSupportImpactConfig[profileName] or FireSupportImpactConfig.barrage
+            if impactDelay <= 0 then
+                impactDelay = config.warning or 5
+            end
+
+            GM3_BroadcastArtilleryPreview(ply, position, radius, impactDelay, profileName)
 
             for i = 1, shells do
-                local fireDelay = (i - 1) * delay
+                local fireDelay = impactDelay + (i - 1) * delay
                 timer.Simple(fireDelay, function()
                     if not IsValid(ply) then return end
                     local offset = VectorRand():GetNormalized() * math.Rand(0, radius)
@@ -1074,14 +1320,16 @@ do
                 ply:ChatPrint("Invalid drop position.")
                 return
             end
-            if dropType ~= "ammo" and dropType ~= "medical" and dropType ~= "tech" then
-                dropType = "ammo"
+            local config = GM3_SupplyTypes[dropType]
+            if not config then
+                ply:ChatPrint("Unknown drop type.")
+                return
             end
 
             local crate = ents.Create("prop_physics")
             if not IsValid(crate) then return end
 
-            crate:SetModel("models/Items/item_item_crate.mdl")
+            crate:SetModel(config.model or "models/Items/item_item_crate.mdl")
             crate:SetPos(pos + Vector(0, 0, 600))
             crate:Spawn()
             local phys = crate:GetPhysicsObject()
@@ -1092,7 +1340,7 @@ do
 
             crate.GM3Supply = {
                 type = dropType,
-                uses = 3,
+                uses = config.uses or 3,
                 owner = ply
             }
             table.insert(GM3_SupplyCrates, crate)
@@ -1173,65 +1421,107 @@ do
             end
             radius = math.Clamp(radius, 200, 2000)
 
-            local contacts = {}
-            for _, ent in ipairs(ents.FindInSphere(origin, radius)) do
-                if not IsValid(ent) then continue end
-                if ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot() then
-                    local velocity = ent.GetVelocity and ent:GetVelocity() or vector_origin
-                    local dir = velocity:GetNormalized()
-                    if dir.x ~= dir.x or dir.y ~= dir.y or dir.z ~= dir.z then
-                        dir = vector_origin
-                    end
-                    local friendly = false
-                    if ent:IsPlayer() and ply:IsPlayer() and ent.Team and ply.Team then
-                        friendly = ent:Team() == ply:Team()
-                    elseif ent:IsNPC() and ent.Disposition then
-                        friendly = ent:Disposition(ply) ~= D_HT
-                    end
-                    local entry = {
-                        pos = ent:WorldSpaceCenter(),
-                        type = ent:IsPlayer() and "player" or "npc",
-                        class = ent:GetClass(),
-                        label = ent:IsPlayer() and ent:Nick() or ent:GetClass(),
-                        dir = dir,
-                        speed = velocity:Length(),
-                        friendly = friendly
-                    }
-                    table.insert(contacts, entry)
-                elseif ent:GetClass() == "prop_physics" then
-                    table.insert(contacts, {
-                        pos = ent:WorldSpaceCenter(),
-                        type = "prop",
-                        class = ent:GetClass(),
-                        label = "Prop",
-                        dir = vector_origin,
-                        speed = 0,
-                        friendly = false
-                    })
-                end
-                if #contacts >= 32 then break end
-            end
-
-            net.Start("gm3ZeusCam_reconData")
-                net.WriteVector(origin)
-                net.WriteUInt(radius, 12)
-                net.WriteUInt(#contacts, 8)
-                for _, contact in ipairs(contacts) do
-                    net.WriteVector(contact.pos)
-                    net.WriteString(contact.type or "")
-                    net.WriteString(contact.class or "")
-                    net.WriteString(contact.label or "")
-                    net.WriteVector(contact.dir or vector_origin)
-                    net.WriteFloat(contact.speed or 0)
-                    net.WriteBool(contact.friendly or false)
-                end
-            net.Send(ply)
-
+            local contacts = GM3_SendReconData(ply, origin, radius) or {}
             ply:ChatPrint(string.format("Recon pulse sent (%d contacts).", #contacts))
             lyx.Logger:Log("Zeus cam recon pulse by " .. ply:Nick())
         end,
         auth = function(ply) return gm3:SecurityCheck(ply) end,
         rateLimit = 3
+    })
+    lyx:NetAdd("gm3ZeusCam_deploySensor", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized sensor deployment by " .. ply:Nick(), 2)
+                return
+            end
+
+            local pos = net.ReadVector()
+            local radius = net.ReadUInt(12) or 0
+            local duration = net.ReadUInt(12) or 0
+            if not isvector(pos) then
+                ply:ChatPrint("Invalid sensor position.")
+                return
+            end
+            radius = math.Clamp(radius, 200, 1500)
+            duration = math.Clamp(duration, 10, 180)
+
+            GM3_ReconSensors[#GM3_ReconSensors + 1] = {
+                owner = ply,
+                pos = pos,
+                radius = radius,
+                expire = CurTime() + duration,
+                nextPulse = CurTime()
+            }
+            ply:ChatPrint("Sensor beacon deployed.")
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 3
+    })
+    lyx:NetAdd("gm3ZeusCam_screenMessage", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized screen message by " .. ply:Nick(), 2)
+                return
+            end
+
+            local targeted = net.ReadBool()
+            local targets = {}
+            if targeted then
+                local count = net.ReadUInt(8) or 0
+                for i = 1, count do
+                    local ent = net.ReadEntity()
+                    if IsValid(ent) and ent:IsPlayer() then
+                        table.insert(targets, ent)
+                    end
+                end
+            else
+                targets = player.GetAll()
+            end
+
+            local msg = string.sub(net.ReadString() or "", 1, 256)
+            local color = net.ReadColor()
+            local duration = math.Clamp(math.floor(net.ReadFloat() or 5), 1, 30)
+            local fade = math.Clamp(math.floor(net.ReadFloat() or 90), 20, 400)
+
+            if #targets == 0 then
+                ply:ChatPrint("No valid recipients.")
+                return
+            end
+
+            net.Start("gm3:tools:screenmessage")
+                net.WriteString(msg)
+                net.WriteColor(color)
+                net.WriteInt(duration, 32)
+                net.WriteInt(fade, 32)
+            net.Send(targets)
+
+            lyx.Logger:Log(string.format("Zeus screen message by %s to %d recipients.", ply:Nick(), #targets))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 3
+    })
+    lyx:NetAdd("gm3ZeusCam_buffPlayers", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized player buff by " .. ply:Nick(), 2)
+                return
+            end
+            local count = net.ReadUInt(8) or 0
+            local buffed = 0
+            for i = 1, count do
+                local target = net.ReadEntity()
+                if IsValid(target) and target:IsPlayer() then
+                    target:SetHealth(math.min(target:GetMaxHealth(), target:Health() + 40))
+                    target:SetArmor(math.min(100, target:Armor() + 40))
+                    target:EmitSound("items/smallmedkit1.wav")
+                    buffed = buffed + 1
+                end
+            end
+            ply:ChatPrint(string.format("Inspired %d players.", buffed))
+            lyx.Logger:Log("Zeus cam player buff by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 4
     })
     --[[
         Zeus Cam - Spawn NPCs at cursor
@@ -1276,7 +1566,8 @@ do
                 end
 
                 local offset = Vector((i % 5) * 24, math.floor((i - 1) / 5) * 24, 0)
-                npc:SetPos(pos + offset)
+                local spawnPos = GM3_GetSafeSpawnPos(pos + offset)
+                npc:SetPos(spawnPos)
                 npc:SetAngles(ang)
 
                 if weapon ~= "" then
@@ -1330,6 +1621,68 @@ do
         end,
         auth = function(ply) return gm3:SecurityCheck(ply) end,
         rateLimit = 5
+    })
+
+    lyx:NetAdd("gm3ZeusCam_redeployNPCs", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized redeploy attempt by " .. ply:Nick(), 2)
+                return
+            end
+            local entities = ReadSelectionEntities(80)
+            local pos = net.ReadVector()
+            if not entities or not isvector(pos) then
+                ply:ChatPrint("Invalid redeploy data.")
+                return
+            end
+            local redeployed = 0
+            for _, ent in ipairs(entities) do
+                if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+                    local offset = VectorRand() * 36
+                    offset.z = math.random(12, 48)
+                    local safePos = GM3_GetSafeSpawnPos(pos + offset)
+                    ent:SetPos(safePos)
+                    ent:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+                    ent:SetVelocity(vector_origin)
+                    redeployed = redeployed + 1
+                end
+            end
+            ply:ChatPrint("Redeployed " .. redeployed .. " units.")
+            lyx.Logger:Log("Zeus cam redeploy by " .. ply:Nick() .. " (" .. redeployed .. ")")
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 4
+    })
+
+    lyx:NetAdd("gm3ZeusCam_dropMarker", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized marker attempt by " .. ply:Nick(), 2)
+                return
+            end
+            local pos = net.ReadVector()
+            local label = string.Trim(net.ReadString() or "")
+            local colorIdx = net.ReadUInt(3) or 0
+            local duration = net.ReadFloat() or 10
+            if not isvector(pos) then
+                return
+            end
+            if label == "" then
+                label = "Signal"
+            end
+            local color = GM3_SignalColors[colorIdx] or GM3_SignalColors[0]
+            net.Start("gm3ZeusCam_signalMarker")
+                net.WriteVector(pos)
+                net.WriteString(label)
+                net.WriteUInt(color.r, 8)
+                net.WriteUInt(color.g, 8)
+                net.WriteUInt(color.b, 8)
+                net.WriteFloat(math.Clamp(duration, 3, 60))
+            net.Broadcast()
+            lyx.Logger:Log(string.format("Zeus cam marker '%s' placed by %s", label, ply:Nick()))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 4
     })
 
     hook.Add("Think", "GM3_ZeusPatrolThink", function()
@@ -1424,27 +1777,38 @@ do
         end
     end)
 
+    hook.Add("Think", "GM3_ZeusSensorThink", function()
+        local now = CurTime()
+        for i = #GM3_ReconSensors, 1, -1 do
+            local sensor = GM3_ReconSensors[i]
+            if not sensor or sensor.expire <= now or not IsValid(sensor.owner) then
+                table.remove(GM3_ReconSensors, i)
+            elseif now >= (sensor.nextPulse or 0) then
+                GM3_SendReconData(sensor.owner, sensor.pos, sensor.radius)
+                sensor.nextPulse = now + 3
+            end
+        end
+    end)
+
     hook.Add("PlayerUse", "GM3_ZeusSupplyUse", function(ply, ent)
         if not IsValid(ply) or not IsValid(ent) then return end
         local supply = ent.GM3Supply
         if not supply then return end
 
         local dropType = supply.type or "ammo"
-        if dropType == "ammo" then
-            ply:GiveAmmo(60, "SMG1", true)
-            ply:GiveAmmo(30, "AR2", true)
-        elseif dropType == "medical" then
-            local newHealth = math.min(ply:GetMaxHealth(), ply:Health() + 60)
-            ply:SetHealth(newHealth)
-            ply:SetArmor(math.min(100, ply:Armor() + 40))
-        elseif dropType == "tech" then
-            ply:Give("weapon_frag")
-            ply:Give("weapon_slam")
+        local config = GM3_SupplyTypes[dropType]
+        if not config then
+            ent:Remove()
+            return false
         end
 
-        supply.uses = (supply.uses or 1) - 1
-        ent:EmitSound("items/ammo_pickup.wav")
-        if supply.uses <= 0 then
+        local removeImmediately = config.apply and config.apply(ply, ent, supply)
+
+        supply.uses = (supply.uses or config.uses or 1) - 1
+        if not removeImmediately then
+            ent:EmitSound("items/ammo_pickup.wav")
+        end
+        if removeImmediately or supply.uses <= 0 then
             ent:EmitSound("ambient/materials/door_hit1.wav")
             ent:Remove()
         end
@@ -1496,6 +1860,8 @@ do
     lyx:NetAdd("gm3:tools:opsatRemove", {})  -- Remove OPSAT display
     lyx:NetAdd("gm3:tools:opsatSet", {})  -- Set OPSAT display
     lyx:NetAdd("gm3:tools:requestOpsat", {})  -- Request OPSAT data on join
+    lyx:NetAdd("gm3ZeusCam_signalMarker", {})
+    lyx:NetAdd("gm3ZeusCam_artilleryPreview", {})
     lyx:NetAdd("gm3ZeusCam_reconData", {})
 
     --[[

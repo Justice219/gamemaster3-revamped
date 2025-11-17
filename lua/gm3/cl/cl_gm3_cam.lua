@@ -20,6 +20,7 @@ local CVCamFOV = CreateClientConVar("gm3Cam_fov", 90, true, false, "FOV of Simpl
 local CVCamSpeed = CreateClientConVar("gm3Cam_speed", 2, true, false, "Movement speed of Simple FreeCam", 0.1, 10)
 local CVCamLock = CreateClientConVar("gm3Cam_lock", 0, true, false, "Lock Simple FreeCam", 0, 1)
 local CVCamSens = CreateClientConVar("gm3Cam_sens", 0.02, true, false, "Mouse sensitivity of Simple FreeCam", 0.001, 1)
+local CVCamArtilleryDelay = CreateClientConVar("gm3Cam_artilleryDelay", 6, true, false, "Seconds before artillery impacts", 1, 120)
 local gm3_selectedEntities = {}
 local gm3_selectionCount = 0
 local gm3_moveOrders = {}
@@ -50,6 +51,7 @@ local gm3_rightMouseHeld = false
 local gm3CamPanel = nil
 local gm3_zeusAllowed = false
 local gm3_selectionGroups = gm3_selectionGroups or {}
+local gm3_cameraBookmarks = gm3_cameraBookmarks or {}
 local gm3_waypointMode = false
 local gm3_waypoints = gm3_waypoints or {}
 local gm3_waypointLoop = true
@@ -57,35 +59,100 @@ local gm3_nextWaypointClick = 0
 local gm3_waypointPreviewPos = nil
 local gm3_waypointClearHeld = false
 local gm3_reconPings = gm3_reconPings or {}
+local gm3_signalMarkers = gm3_signalMarkers or {}
 local gm3_lastReconRequest = 0
 local gm3_routeVisuals = gm3_routeVisuals or {}
 local vector_origin = vector_origin or Vector(0, 0, 0)
+local gm3_artilleryPreviews = gm3_artilleryPreviews or {}
+local gm3_lastContextTrace = nil
+local gm3_followTarget = nil
+local gm3_followOffset = Vector(0, 0, 0)
+local gm3_followYaw = nil
+local gm3_routeLineOffsets = {
+    Vector(0, 0, 2),
+    Vector(0, 0, 3.5),
+    Vector(0, 0, 5)
+}
+local gm3_routeBoxMins = Vector(-2, -2, -1)
+local gm3_routeBoxMaxs = Vector(2, 2, 1)
+local function gm3_NormalizeArtilleryDelay(value)
+    value = tonumber(value) or CVCamArtilleryDelay:GetFloat() or 6
+    return math.Clamp(math.floor(value + 0.5), 1, 120)
+end
+
+local function gm3_UpdateArtilleryDelay(value, skipCommand)
+    local delay = gm3_NormalizeArtilleryDelay(value)
+    if not skipCommand then
+        RunConsoleCommand("gm3Cam_artilleryDelay", tostring(delay))
+    end
+    gm3ZeusCam._artilleryDelay = delay
+
+    local slider = gm3ZeusCam.FireSupportSlider
+    if IsValid(slider) and slider:GetValue() ~= delay then
+        slider._suppress = true
+        slider:SetValue(delay)
+        slider._suppress = false
+    end
+
+    local spawnSlider = gm3ZeusCam.SpawnArtillerySlider
+    if IsValid(spawnSlider) and spawnSlider:GetValue() ~= delay then
+        spawnSlider._suppress = true
+        spawnSlider:SetValue(delay)
+        spawnSlider._suppress = false
+    end
+end
+
+cvars.AddChangeCallback("gm3Cam_artilleryDelay", function(_, _, new)
+    gm3_UpdateArtilleryDelay(new, true)
+end, "gm3ZeusCam_artillerySync")
+
+gm3_UpdateArtilleryDelay(CVCamArtilleryDelay:GetFloat(), true)
 
 local gm3_fireSupportProfiles = {
     precision = {
         label = "Precision Strike",
-        radius = 120,
+        radius = 160,
         shells = 1,
-        delay = 0.35
+        delay = 0.35,
+        warning = 5
     },
     barrage = {
         label = "Heavy Barrage",
-        radius = 260,
+        radius = 340,
         shells = 5,
-        delay = 0.7
+        delay = 0.7,
+        warning = 8
     },
     carpet = {
         label = "Carpet Bomb",
-        radius = 420,
+        radius = 520,
         shells = 8,
-        delay = 1.1
+        delay = 1.1,
+        warning = 10
     },
     smoke = {
         label = "Smoke Screen",
-        radius = 200,
+        radius = 260,
         shells = 4,
         delay = 0.5,
-        smoke = true
+        smoke = true,
+        warning = 6
+    },
+    incendiary = {
+        label = "Incendiary Strike",
+        radius = 260,
+        shells = 4,
+        delay = 0.5,
+        incendiary = true,
+        warning = 7
+    },
+    emp = {
+        label = "EMP Blast",
+        radius = 220,
+        shells = 2,
+        delay = 0.8,
+        emp = true,
+        warning = 6
     }
 }
 
@@ -104,17 +171,81 @@ local gm3_routeColors = {
     default = Color(255, 255, 255)
 }
 
-local gm3_beamMaterial = gm3_beamMaterial or Material("cable/new_cable_lit")
+local gm3_logisticsOptions = {
+    {key = "ammo", label = "Ammo Drop", icon = "icon16/box.png"},
+    {key = "medical", label = "Medical Drop", icon = "icon16/medkit.png"},
+    {key = "tech", label = "Technology Drop", icon = "icon16/wrench.png"},
+    {key = "shield", label = "Shield Drop", icon = "icon16/shield.png"},
+    {key = "turret", label = "Turret Drop", icon = "icon16/lightning.png"}
+}
 
-local function DrawThickBeam(startPos, endPos, width, color)
+local gm3_screenMessageColors = {
+    {name = "White", color = Color(255, 255, 255)},
+    {name = "Amber", color = Color(255, 200, 100)},
+    {name = "Red", color = Color(255, 80, 80)},
+    {name = "Blue", color = Color(90, 160, 255)},
+    {name = "Green", color = Color(120, 255, 120)}
+}
+
+local gm3_signalPalette = {
+    {name = "Gold", color = Color(255, 200, 80)},
+    {name = "Scarlet", color = Color(255, 90, 90)},
+    {name = "Cyan", color = Color(90, 200, 255)},
+    {name = "Emerald", color = Color(120, 255, 150)},
+    {name = "Violet", color = Color(190, 140, 255)}
+}
+
+local gm3_artilleryColors = {
+    precision = Color(255, 255, 200),
+    barrage = Color(255, 170, 50),
+    carpet = Color(255, 120, 120),
+    smoke = Color(160, 220, 255),
+    incendiary = Color(255, 120, 60),
+    emp = Color(160, 200, 255),
+    default = Color(255, 200, 140)
+}
+
+local function gm3_GetEffectiveTrace(tr)
+    if tr and tr.Hit then return tr end
+    return gm3ZeusCam:GetCursorTrace()
+end
+
+local function DrawThickBeam(startPos, endPos, _, color)
     if not startPos or not endPos then return end
-    render.SetMaterial(gm3_beamMaterial)
-    render.DrawBeam(startPos, endPos, width or 4, 0, 1, color)
-    render.SetColorMaterial()
+    color = color or color_white
+    for _, offset in ipairs(gm3_routeLineOffsets) do
+        render.DrawLine(startPos + offset, endPos + offset, color)
+    end
+
+    local mid = LerpVector(0.5, startPos, endPos)
+    local dir = endPos - startPos
+    if dir:IsZero() then return end
+    local ang = dir:Angle()
+    render.DrawWireframeBox(mid, Angle(0, ang.y, 0), gm3_routeBoxMins, gm3_routeBoxMaxs, Color(color.r, color.g, color.b, math.floor((color.a or 255) * 0.6)))
 end
 
 local function ClearRouteVisuals()
     table.Empty(gm3_routeVisuals)
+end
+
+function gm3ZeusCam:SaveCameraBookmark(slot)
+    if not slot then return end
+    gm3_cameraBookmarks[slot] = {
+        pos = Vector(CamPos),
+        ang = Angle(CamAngle)
+    }
+    notification.AddLegacy("Saved camera bookmark #" .. slot, NOTIFY_GENERIC, 2)
+end
+
+function gm3ZeusCam:LoadCameraBookmark(slot)
+    local data = gm3_cameraBookmarks[slot]
+    if not data then
+        notification.AddLegacy("Bookmark #" .. slot .. " is empty.", NOTIFY_HINT, 2)
+        return
+    end
+    CamPos = Vector(data.pos)
+    CamAngle = Angle(data.ang)
+    notification.AddLegacy("Loaded camera bookmark #" .. slot, NOTIFY_GENERIC, 2)
 end
 
 surface.CreateFont("GM3_Cam_Subtitle", {
@@ -354,8 +485,14 @@ function gm3ZeusCam:RefreshSpawnControls()
     if IsValid(controls.classEntry) and controls.classEntry:GetValue() ~= (gm3_spawnConfig.class or "") then
         controls.classEntry:SetValue(gm3_spawnConfig.class or "")
     end
-    if IsValid(controls.weaponEntry) and controls.weaponEntry:GetValue() ~= (gm3_spawnConfig.weapon or "") then
-        controls.weaponEntry:SetValue(gm3_spawnConfig.weapon or "")
+    if IsValid(controls.weaponCombo) then
+        local value = gm3_spawnConfig.weapon or ""
+        if value == "" then
+            value = "Default Weapon"
+        end
+        if controls.weaponCombo:GetValue() ~= value then
+            controls.weaponCombo:SetValue(value)
+        end
     end
     if IsValid(controls.countEntry) then
         controls.countEntry:SetValue(tostring(gm3_spawnConfig.count or 1))
@@ -435,8 +572,8 @@ function gm3ZeusCam:FocusSelection()
     CamOriginalAngle = CamAngle
 end
 
-function gm3ZeusCam:ShockwaveAtCursor()
-    local tr = self:GetCursorTrace()
+function gm3ZeusCam:ShockwaveAtCursor(traceOverride)
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at a location to trigger the shockwave.", NOTIFY_HINT, 2)
         return
@@ -460,7 +597,8 @@ local function GetSelectionCounts()
     local counts = {
         players = 0,
         npcs = 0,
-        props = 0
+        props = 0,
+        totalHealth = 0
     }
     for ent, _ in pairs(gm3_selectedEntities) do
         if IsValid(ent) then
@@ -468,11 +606,13 @@ local function GetSelectionCounts()
                 counts.players = counts.players + 1
             elseif ent:IsNPC() or ent:IsNextBot() then
                 counts.npcs = counts.npcs + 1
+                counts.totalHealth = counts.totalHealth + math.max(ent:Health() or 0, 0)
             else
                 counts.props = counts.props + 1
             end
         end
     end
+    counts.avgHealth = counts.npcs > 0 and math.floor(counts.totalHealth / counts.npcs) or 0
     return counts
 end
 
@@ -484,6 +624,46 @@ local function GetSelectionColor(ent)
         return Color(255, 80, 80)
     else
         return Color(200, 140, 255)
+    end
+end
+
+local function DrawSelectionSummaryPanel(counts)
+    if gm3_selectionCount == 0 then return end
+    local panelW = lyx.ScaleW(240)
+    local panelH = lyx.Scale(90)
+    local x = ScrW() - panelW - lyx.ScaleW(20)
+    local y = ScrH() - panelH - lyx.Scale(120)
+    surface.SetDrawColor(15, 15, 15, 200)
+    surface.DrawRect(x, y, panelW, panelH)
+    surface.SetDrawColor(90, 200, 255, 200)
+    surface.DrawOutlinedRect(x, y, panelW, panelH)
+    draw.SimpleText("Selection Summary", "GM3_Cam_Subtitle", x + lyx.Scale(8), y + lyx.Scale(6), color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    local rowY = y + lyx.Scale(28)
+    draw.SimpleText("Members: " .. gm3_selectionCount, "GM3_Cam_Subtitle", x + lyx.Scale(10), rowY, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    rowY = rowY + lyx.Scale(18)
+    draw.SimpleText(string.format("Players %d · NPCs %d · Props %d", counts.players, counts.npcs, counts.props), "GM3_Cam_Subtitle", x + lyx.Scale(10), rowY, Color(220, 220, 220), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    rowY = rowY + lyx.Scale(18)
+    draw.SimpleText("Avg NPC Health: " .. counts.avgHealth, "GM3_Cam_Subtitle", x + lyx.Scale(10), rowY, Color(200, 255, 200), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+end
+
+local function DrawSignalMarkersHUD()
+    if #gm3_signalMarkers == 0 then return end
+    local now = CurTime()
+    local displayY = ScrH() * 0.35
+    for i = #gm3_signalMarkers, 1, -1 do
+        local marker = gm3_signalMarkers[i]
+        if not marker or marker.expire <= now then
+            table.remove(gm3_signalMarkers, i)
+        else
+            local screen = marker.pos:ToScreen()
+            local txt = string.format("%s (%.0fs)", marker.label or "Marker", marker.expire - now)
+            draw.SimpleText(txt, "GM3_Cam_Subtitle", screen.x, screen.y, marker.color or color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            surface.SetDrawColor(marker.color.r, marker.color.g, marker.color.b, 180)
+            surface.DrawLine(screen.x - 20, screen.y, screen.x + 20, screen.y)
+            surface.DrawLine(screen.x, screen.y - 20, screen.x, screen.y + 20)
+            draw.SimpleText(txt, "GM3_Cam_Subtitle", ScrW() - lyx.ScaleW(10), displayY, marker.color or color_white, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+            displayY = displayY + lyx.Scale(18)
+        end
     end
 end
 
@@ -536,8 +716,8 @@ function gm3ZeusCam:SetCursorMode(state)
     end
 end
 
-function gm3ZeusCam:TrackMoveOrders(targetPos, entities)
-    if not targetPos then return end
+function gm3ZeusCam:TrackMoveOrders(targetPos, entities, skipVisual)
+    if not targetPos or skipVisual then return end
     local now = CurTime()
     for _, ent in ipairs(entities or {}) do
         if IsValid(ent) then
@@ -593,7 +773,8 @@ local function UpdateRouteVisualProgress()
         else
             data.currentIndex = math.Clamp(data.currentIndex or 1, 1, #data.nodes)
             local target = data.nodes[data.currentIndex]
-            if target and ent:GetPos():DistToSqr(target) < (data.threshold or 6400) then
+            local entPos = ent:WorldSpaceCenter()
+            if target and entPos:DistToSqr(target) < (data.threshold or 6400) then
                 data.currentIndex = data.currentIndex + 1
                 if data.currentIndex > #data.nodes then
                     if data.loop then
@@ -704,7 +885,7 @@ function gm3ZeusCam:CommitWaypoints()
     end)
 
     if selection then
-        self:TrackMoveOrders(finalTarget, selection)
+        self:TrackMoveOrders(finalTarget, selection, true)
         notification.AddLegacy("Issued patrol route to " .. tostring(#selection) .. " units.", NOTIFY_GENERIC, 3)
         self:CreateRouteVisualFor(selection, {
             routeType = "patrol",
@@ -792,6 +973,8 @@ end
 function gm3ZeusCam:CreateSpawnToolbar(parent)
     if IsValid(self.SpawnToolbar) then
         self.SpawnToolbar:Remove()
+        self.SpawnToolbar = nil
+        self.SpawnArtillerySlider = nil
     end
 
     local panel = vgui.Create("DPanel", parent)
@@ -855,6 +1038,8 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         PopulateNPCCombo(value)
     end
 
+    local SetWeaponChoices
+
     npcCombo.OnSelect = function(_, _, _, entry)
         if not entry or self._refreshingSpawn then return end
         gm3_spawnConfig.class = entry.class
@@ -864,19 +1049,10 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         else
             gm3_spawnConfig.weapon = ""
         end
-        self:RefreshSpawnControls()
-    end
-
-    local initialCategory, initialEntry = self:FindNPCEntry(gm3_spawnConfig.class)
-    if not initialCategory then
-        initialCategory = next(cache)
-    end
-    if initialCategory then
-        PopulateNPCCombo(initialCategory)
-        categoryCombo:SetValue(initialCategory)
-        if initialEntry then
-            npcCombo:SetValue(initialEntry.name or initialEntry.class)
+        if SetWeaponChoices then
+            SetWeaponChoices(weapons)
         end
+        self:RefreshSpawnControls()
     end
 
     local classLabel = vgui.Create("DLabel", panel)
@@ -905,14 +1081,67 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
     weaponLabel:SetTextColor(color_white)
     weaponLabel:SetTall(lyx.Scale(18))
 
-    local weaponEntry = vgui.Create("lyx.TextEntry2", panel)
-    weaponEntry:Dock(TOP)
-    weaponEntry:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
-    weaponEntry:SetPlaceholderText("Weapon (weapon_smg1)")
-    weaponEntry:SetValue(gm3_spawnConfig.weapon)
-    weaponEntry.OnChange = function(s)
+    local defaultWeaponLabel = "Default Weapon"
+    local weaponCombo = vgui.Create("DComboBox", panel)
+    weaponCombo:Dock(TOP)
+    weaponCombo:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
+    weaponCombo:SetTall(lyx.Scale(24))
+    weaponCombo:SetValue(gm3_spawnConfig.weapon ~= "" and gm3_spawnConfig.weapon or defaultWeaponLabel)
+    if IsValid(weaponCombo.TextEntry) and weaponCombo.TextEntry.SetEditable then
+        weaponCombo.TextEntry:SetEditable(true)
+    end
+    weaponCombo.OnSelect = function(_, _, value, data)
         if self._refreshingSpawn then return end
-        gm3_spawnConfig.weapon = string.Trim(s:GetValue() or "")
+        local result = data ~= nil and data or value or ""
+        if result == defaultWeaponLabel then
+            result = ""
+        end
+        gm3_spawnConfig.weapon = string.Trim(result or "")
+    end
+    weaponCombo.OnChange = function(combo)
+        if self._refreshingSpawn then return end
+        local val = string.Trim(combo:GetValue() or "")
+        if val == defaultWeaponLabel then
+            val = ""
+        end
+        gm3_spawnConfig.weapon = val
+    end
+
+    SetWeaponChoices = function(weapons)
+        weaponCombo:Clear()
+        weaponCombo:AddChoice(defaultWeaponLabel, "")
+        if istable(weapons) then
+            for _, weaponName in ipairs(weapons) do
+                if isstring(weaponName) and weaponName ~= "" then
+                    weaponCombo:AddChoice(weaponName, weaponName)
+                end
+            end
+        end
+        local current = gm3_spawnConfig.weapon or ""
+        if current == "" then
+            weaponCombo:SetValue(defaultWeaponLabel)
+        else
+            weaponCombo:SetValue(current)
+        end
+    end
+
+    local initialCategory, initialEntry = self:FindNPCEntry(gm3_spawnConfig.class)
+    if not initialCategory then
+        initialCategory = next(cache)
+    end
+    if initialCategory then
+        PopulateNPCCombo(initialCategory)
+        categoryCombo:SetValue(initialCategory)
+        if initialEntry then
+            npcCombo:SetValue(initialEntry.name or initialEntry.class)
+        end
+    end
+    if SetWeaponChoices then
+        if initialEntry then
+            SetWeaponChoices(initialEntry.data and initialEntry.data.Weapons)
+        else
+            SetWeaponChoices(nil)
+        end
     end
 
     local countLabel = vgui.Create("DLabel", panel)
@@ -988,6 +1217,33 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         end
     end
 
+    local artilleryLabel = vgui.Create("DLabel", panel)
+    artilleryLabel:Dock(TOP)
+    artilleryLabel:DockMargin(lyx.Scale(8), lyx.Scale(6), lyx.Scale(8), 0)
+    artilleryLabel:SetFont("GM3_Cam_Subtitle")
+    artilleryLabel:SetText("Artillery Warning Delay (sec)")
+    artilleryLabel:SetTextColor(color_white)
+    artilleryLabel:SetTall(lyx.Scale(20))
+
+    local artillerySlider = vgui.Create("DNumSlider", panel)
+    artillerySlider:Dock(TOP)
+    artillerySlider:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(4))
+    artillerySlider:SetMin(1)
+    artillerySlider:SetMax(120)
+    artillerySlider:SetDecimals(0)
+    artillerySlider:SetValue(gm3_NormalizeArtilleryDelay(CVCamArtilleryDelay:GetFloat()))
+    artillerySlider:SetText("Fire Support Delay")
+    artillerySlider:SetTall(lyx.Scale(30))
+    if artillerySlider.Label then
+        artillerySlider.Label:SetFont("GM3_Cam_Subtitle")
+        artillerySlider.Label:SetTextColor(color_white)
+    end
+    artillerySlider.OnValueChanged = function(slider, value)
+        if slider._suppress then return end
+        gm3_UpdateArtilleryDelay(value)
+    end
+    gm3ZeusCam.SpawnArtillerySlider = artillerySlider
+
     local toggle = vgui.Create("lyx.TextButton2", panel)
     toggle:Dock(BOTTOM)
     toggle:DockMargin(lyx.Scale(8), 0, lyx.Scale(8), lyx.Scale(8))
@@ -1003,7 +1259,8 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
         categoryCombo = categoryCombo,
         npcCombo = npcCombo,
         classEntry = classEntry,
-        weaponEntry = weaponEntry,
+        weaponCombo = weaponCombo,
+        weaponChoices = SetWeaponChoices,
         countEntry = countEntry,
         relationship = relationship,
         PresetButtons = presetButtons,
@@ -1013,6 +1270,90 @@ function gm3ZeusCam:CreateSpawnToolbar(parent)
     self:SetWaypointMode(false)
     self:RefreshWaypointLoopButton()
     self:RefreshSpawnControls()
+end
+
+function gm3ZeusCam:OpenFireSupportPanel()
+    if IsValid(self.FireSupportPanel) then
+        self.FireSupportPanel:MakePopup()
+        self.FireSupportPanel:MoveToFront()
+        return
+    end
+
+    local frame = vgui.Create("lyx.Frame2")
+    if not IsValid(frame) then return end
+    frame:SetTitle("Fire Support Console")
+    frame:SetSize(lyx.ScaleW(320), lyx.Scale(380))
+    frame:Center()
+    frame:MakePopup()
+    frame:DockPadding(lyx.Scale(8), lyx.Scale(30), lyx.Scale(8), lyx.Scale(8))
+    self.FireSupportPanel = frame
+
+    local hint = vgui.Create("DLabel", frame)
+    hint:Dock(TOP)
+    hint:SetTall(lyx.Scale(20))
+    hint:SetFont("GM3_Cam_Subtitle")
+    hint:SetTextColor(color_white)
+    hint:SetText("Adjust warning delay, then pick a strike profile.")
+
+    local slider = vgui.Create("DNumSlider", frame)
+    slider:Dock(TOP)
+    slider:DockMargin(0, lyx.Scale(4), 0, lyx.Scale(6))
+    slider:SetMin(1)
+    slider:SetMax(120)
+    slider:SetDecimals(0)
+    slider:SetValue(gm3_NormalizeArtilleryDelay(CVCamArtilleryDelay:GetFloat()))
+    slider:SetText("Impact Warning (sec)")
+    if slider.Label then
+        slider.Label:SetFont("GM3_Cam_Subtitle")
+        slider.Label:SetTextColor(color_white)
+    end
+    if slider.TextArea then
+        slider.TextArea:SetDrawLanguageID(false)
+        slider.TextArea:SetFont("GM3_Cam_Subtitle")
+        slider.TextArea:SetTextColor(color_white)
+        slider.TextArea:SetPaintBackground(false)
+    end
+    slider.OnValueChanged = function(s, value)
+        if s._suppress then return end
+        gm3_UpdateArtilleryDelay(value)
+    end
+    gm3ZeusCam.FireSupportSlider = slider
+
+    local traceInfo = vgui.Create("DLabel", frame)
+    traceInfo:Dock(TOP)
+    traceInfo:SetTall(lyx.Scale(20))
+    traceInfo:SetFont("GM3_Cam_Subtitle")
+    traceInfo:SetTextColor(Color(200, 200, 200))
+    traceInfo:SetText("Using latest cursor target when opened.")
+
+    local scroll = vgui.Create("DScrollPanel", frame)
+    scroll:Dock(FILL)
+    scroll:DockMargin(0, lyx.Scale(6), 0, 0)
+
+    for key, profile in SortedPairs(gm3_fireSupportProfiles) do
+        local btn = vgui.Create("lyx.TextButton2", scroll)
+        btn:Dock(TOP)
+        btn:DockMargin(0, 0, 0, lyx.Scale(4))
+        btn:SetTall(lyx.Scale(32))
+        btn:SetText(string.format("%s • %d shells", profile.label, profile.shells or 1))
+        btn.DoClick = function()
+            local trace = gm3ZeusCam._pendingFireSupportTrace
+            if not trace or not trace.Hit then
+                trace = gm3ZeusCam:GetCursorTrace()
+            end
+            gm3ZeusCam:CallFireSupport(key, trace)
+            frame:Close()
+        end
+    end
+
+    frame.OnRemove = function()
+        if gm3ZeusCam.FireSupportSlider == slider then
+            gm3ZeusCam.FireSupportSlider = nil
+        end
+        if gm3ZeusCam.FireSupportPanel == frame then
+            gm3ZeusCam.FireSupportPanel = nil
+        end
+    end
 end
 
 function gm3ZeusCam:SpawnAtCursor()
@@ -1030,41 +1371,46 @@ function gm3ZeusCam:SpawnAtCursor()
 
     local weapon = string.Trim(gm3_spawnConfig.weapon or "")
     local count = math.Clamp(gm3_spawnConfig.count or 1, 1, 20)
+    local spawnPos = tr.HitPos + tr.HitNormal * 80
+    local yaw = (CamAngle and CamAngle.y) or 0
+    local spawnAng = Angle(0, yaw, 0)
 
     lyx:NetSend("gm3ZeusCam_spawnNPCs", function()
         net.WriteString(class)
         net.WriteString(weapon)
         net.WriteUInt(count, 6)
-        net.WriteVector(tr.HitPos + Vector(0, 0, 5))
-        net.WriteAngle(CamAngle)
+        net.WriteVector(spawnPos)
+        net.WriteAngle(spawnAng)
         net.WriteString(gm3_spawnConfig.relationship or "hostile")
     end)
 end
 
-function gm3ZeusCam:CallFireSupport(profileKey)
+function gm3ZeusCam:CallFireSupport(profileKey, traceOverride)
     local profile = gm3_fireSupportProfiles[profileKey]
     if not profile then return end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at terrain before calling fire support.", NOTIFY_ERROR, 2)
         return
     end
 
+    local impactDelay = math.Clamp(CVCamArtilleryDelay:GetFloat() or profile.warning or 5, 1, 120)
     lyx:NetSend("gm3ZeusCam_callArtillery", function()
         net.WriteVector(tr.HitPos)
         net.WriteUInt(math.Clamp(profile.radius, 50, 1023), 12)
         net.WriteUInt(math.Clamp(profile.shells, 1, 12), 4)
         net.WriteFloat(math.Clamp(profile.delay or 0.5, 0.1, 3))
         net.WriteBool(profile.smoke and true or false)
+        net.WriteFloat(impactDelay)
         net.WriteString(profileKey or "")
     end)
 
-    notification.AddLegacy("Fire support inbound: " .. profile.label, NOTIFY_GENERIC, 3)
+    notification.AddLegacy(string.format("%s inbound in %ds.", profile.label, math.Round(impactDelay)), NOTIFY_GENERIC, 3)
 end
 
-function gm3ZeusCam:RequestSupplyDrop(dropType)
+function gm3ZeusCam:RequestSupplyDrop(dropType, traceOverride)
     dropType = dropType or "ammo"
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at terrain before requesting a drop.", NOTIFY_ERROR, 2)
         return
@@ -1077,12 +1423,12 @@ function gm3ZeusCam:RequestSupplyDrop(dropType)
     notification.AddLegacy(string.upper(string.sub(dropType, 1, 1)) .. string.sub(dropType, 2) .. " drop inbound.", NOTIFY_GENERIC, 3)
 end
 
-function gm3ZeusCam:CreateDefenseZone(radius, posture)
+function gm3ZeusCam:CreateDefenseZone(radius, posture, traceOverride)
     if not SelectionHasNPCs() then
         notification.AddLegacy("Select NPCs to assign a defense zone.", NOTIFY_HINT, 2)
         return
     end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at terrain before defining a zone.", NOTIFY_ERROR, 2)
         return
@@ -1097,14 +1443,14 @@ function gm3ZeusCam:CreateDefenseZone(radius, posture)
     notification.AddLegacy("Defense zone established (" .. posture .. ")", NOTIFY_GENERIC, 3)
 end
 
-function gm3ZeusCam:RequestReconPulse(radius)
+function gm3ZeusCam:RequestReconPulse(radius, traceOverride)
     local now = CurTime()
     if now < gm3_lastReconRequest then
         notification.AddLegacy("Recon systems recharging...", NOTIFY_HINT, 2)
         return
     end
     radius = math.Clamp(math.floor(radius or 500), 100, 2000)
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at terrain before pinging recon.", NOTIFY_ERROR, 2)
         return
@@ -1118,14 +1464,30 @@ function gm3ZeusCam:RequestReconPulse(radius)
     notification.AddLegacy("Recon pulse launched (" .. radius .. " units).", NOTIFY_HINT, 2)
 end
 
-function gm3ZeusCam:SendFormationCommand(name)
+function gm3ZeusCam:DeploySensorBeacon(duration, radius, traceOverride)
+    duration = duration or 45
+    radius = radius or 600
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before deploying a sensor.", NOTIFY_ERROR, 2)
+        return
+    end
+    lyx:NetSend("gm3ZeusCam_deploySensor", function()
+        net.WriteVector(tr.HitPos)
+        net.WriteUInt(math.Clamp(radius, 200, 1500), 12)
+        net.WriteUInt(math.Clamp(duration, 10, 180), 12)
+    end)
+    notification.AddLegacy("Sensor beacon deploying...", NOTIFY_GENERIC, 2)
+end
+
+function gm3ZeusCam:SendFormationCommand(name, traceOverride)
     if not SelectionHasNPCs() then
         notification.AddLegacy("Select NPCs to use formations.", NOTIFY_HINT, 2)
         return
     end
     local formation = gm3_formations[name]
     if not formation then return end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("Aim at a location to send the formation.", NOTIFY_ERROR, 2)
         return
@@ -1150,7 +1512,6 @@ function gm3ZeusCam:SendFormationCommand(name)
         end
     end)
 
-    self:TrackMoveOrders(tr.HitPos, selection)
     self:CreateRouteVisualFor(selection, {
         routeType = "formation",
         label = "Formation",
@@ -1207,6 +1568,16 @@ function gm3ZeusCam:OpenContextMenu()
 
     local menu = vgui.Create("lyx.Menu2")
     gm3_contextMenu = menu
+    gm3_lastContextTrace = self:GetCursorTrace()
+    if gm3_lastContextTrace and not gm3_lastContextTrace.Hit then
+        gm3_lastContextTrace = nil
+    end
+    menu.OnRemove = function()
+        if gm3_contextMenu == menu then
+            gm3_contextMenu = nil
+        end
+        gm3_lastContextTrace = nil
+    end
 
     if gm3_selectionCount > 0 then
         local hasNPCs = SelectionHasNPCs()
@@ -1225,7 +1596,7 @@ function gm3ZeusCam:OpenContextMenu()
             end):SetIcon("icon16/arrow_up.png")
 
             menu:AddOption("NPCs → Cursor", function()
-                self:SendNPCsToCursor()
+                self:SendNPCsToCursor(gm3_lastContextTrace)
             end):SetIcon("icon16/arrow_out.png")
 
             menu:AddOption("NPCs → Stop", function()
@@ -1239,16 +1610,16 @@ function gm3ZeusCam:OpenContextMenu()
             local formationMenu, parentOption = menu:AddSubMenu("NPC Formations")
             parentOption:SetIcon("icon16/chart_line.png")
             formationMenu:AddOption("Line", function()
-                self:SendFormationCommand("line")
+                self:SendFormationCommand("line", gm3_lastContextTrace)
             end):SetIcon("icon16/shape_align_left.png")
             formationMenu:AddOption("Column", function()
-                self:SendFormationCommand("column")
+                self:SendFormationCommand("column", gm3_lastContextTrace)
             end):SetIcon("icon16/shape_align_bottom.png")
             formationMenu:AddOption("Wedge", function()
-                self:SendFormationCommand("wedge")
+                self:SendFormationCommand("wedge", gm3_lastContextTrace)
             end):SetIcon("icon16/shape_move_forwards.png")
             formationMenu:AddOption("Circle", function()
-                self:SendFormationCommand("circle")
+                self:SendFormationCommand("circle", gm3_lastContextTrace)
             end):SetIcon("icon16/shape_ungroup.png")
 
             local behaviorMenu, behaviorOption = menu:AddSubMenu("NPC Behavior")
@@ -1269,10 +1640,10 @@ function gm3ZeusCam:OpenContextMenu()
             local areaMenu, areaOption = menu:AddSubMenu("Area Control")
             areaOption:SetIcon("icon16/shape_handles.png")
             areaMenu:AddOption("Defense Zone · Small", function()
-                self:CreateDefenseZone(300, "defensive")
+                self:CreateDefenseZone(300, "defensive", gm3_lastContextTrace)
             end):SetIcon("icon16/shield.png")
             areaMenu:AddOption("Defense Zone · Large", function()
-                self:CreateDefenseZone(600, "aggressive")
+                self:CreateDefenseZone(600, "aggressive", gm3_lastContextTrace)
             end):SetIcon("icon16/shield_add.png")
             areaMenu:AddOption("Begin Waypoint Mode", function()
                 self:SetWaypointMode(true)
@@ -1286,8 +1657,17 @@ function gm3ZeusCam:OpenContextMenu()
             end):SetIcon("icon16/user_go.png")
 
             menu:AddOption("Players → Cursor", function()
-                self:SendPlayersToCursor()
+                self:SendPlayersToCursor(gm3_lastContextTrace)
             end):SetIcon("icon16/user_green.png")
+
+            local interactMenu, interactOption = menu:AddSubMenu("Player Interactions")
+            interactOption:SetIcon("icon16/group.png")
+            interactMenu:AddOption("Inspire (HP + Armor)", function()
+                self:SendPlayerBuff()
+            end):SetIcon("icon16/heart.png")
+            interactMenu:AddOption("Screen Message (Selected)", function()
+                self:OpenScreenMessagePrompt(true)
+            end):SetIcon("icon16/comment_edit.png")
         end
 
         if hasProps then
@@ -1305,7 +1685,7 @@ function gm3ZeusCam:OpenContextMenu()
             end):SetIcon("icon16/box.png")
 
             menu:AddOption("Props → Cursor", function()
-                self:SendPropsToCursor()
+                self:SendPropsToCursor(gm3_lastContextTrace)
             end):SetIcon("icon16/box_world.png")
         end
     end
@@ -1330,41 +1710,59 @@ function gm3ZeusCam:OpenContextMenu()
 
     menu:AddSpacer()
     menu:AddOption("Shockwave at Cursor", function()
-        self:ShockwaveAtCursor()
+        self:ShockwaveAtCursor(gm3_lastContextTrace)
     end):SetIcon("icon16/lightning.png")
 
     local fireMenu, fireOption = menu:AddSubMenu("Fire Support")
     fireOption:SetIcon("icon16/bomb.png")
     for key, profile in pairs(gm3_fireSupportProfiles) do
         fireMenu:AddOption(profile.label, function()
-            self:CallFireSupport(key)
+            self:CallFireSupport(key, gm3_lastContextTrace)
         end):SetIcon("icon16/arrow_down.png")
     end
 
     local logisticsMenu, logOption = menu:AddSubMenu("Logistics")
     logOption:SetIcon("icon16/box.png")
-    logisticsMenu:AddOption("Ammo Drop", function()
-        self:RequestSupplyDrop("ammo")
-    end):SetIcon("icon16/box.png")
-    logisticsMenu:AddOption("Medical Drop", function()
-        self:RequestSupplyDrop("medical")
-    end):SetIcon("icon16/medkit.png")
-    logisticsMenu:AddOption("Technology Drop", function()
-        self:RequestSupplyDrop("tech")
-    end):SetIcon("icon16/wrench.png")
+    for _, option in ipairs(gm3_logisticsOptions) do
+        local opt = logisticsMenu:AddOption(option.label, function()
+            self:RequestSupplyDrop(option.key, gm3_lastContextTrace)
+        end)
+        opt:SetIcon(option.icon or "icon16/box.png")
+    end
 
     local intelMenu, intelOption = menu:AddSubMenu("Recon Tools")
     intelOption:SetIcon("icon16/radar.png")
     intelMenu:AddOption("Recon Pulse (Short)", function()
-        self:RequestReconPulse(400)
+        self:RequestReconPulse(400, gm3_lastContextTrace)
     end):SetIcon("icon16/eye.png")
     intelMenu:AddOption("Recon Pulse (Long)", function()
-        self:RequestReconPulse(800)
+        self:RequestReconPulse(800, gm3_lastContextTrace)
     end):SetIcon("icon16/eye.png")
+    intelMenu:AddOption("Recon Pulse (Wide)", function()
+        self:RequestReconPulse(1200, gm3_lastContextTrace)
+    end):SetIcon("icon16/world.png")
+    intelMenu:AddOption("Sensor Beacon (45s)", function()
+        self:DeploySensorBeacon(45, 600, gm3_lastContextTrace)
+    end):SetIcon("icon16/transmit_blue.png")
+    intelMenu:AddOption("Sensor Beacon (120s)", function()
+        self:DeploySensorBeacon(120, 900, gm3_lastContextTrace)
+    end):SetIcon("icon16/transmit.png")
+
+    menu:AddOption("Rapid Redeploy", function()
+        self:RedeploySelection(gm3_lastContextTrace)
+    end):SetIcon("icon16/arrow_refresh.png")
+
+    menu:AddOption("Place Signal Marker", function()
+        self:PromptSignalMarker(gm3_lastContextTrace)
+    end):SetIcon("icon16/flag_red.png")
 
     menu:AddOption("Clear Selection", function()
         ClearSelection()
     end):SetIcon("icon16/cancel.png")
+
+    menu:AddOption("Broadcast Screen Message", function()
+        self:OpenScreenMessagePrompt(false)
+    end):SetIcon("icon16/comment.png")
 
     menu:Open()
     local x, y = self:GetCursorPos()
@@ -1404,7 +1802,7 @@ function gm3ZeusCam:SendNPCsToCamera()
     end
     local selection = self:SendSelectionCommand("gm3ZeusCam_moveToCamera", CamPos)
     if selection then
-        self:TrackMoveOrders(CamPos, selection)
+        self:TrackMoveOrders(CamPos, selection, true)
         self:CreateRouteVisualFor(selection, {
             routeType = "move",
             nodes = {CamPos},
@@ -1415,19 +1813,19 @@ function gm3ZeusCam:SendNPCsToCamera()
     end
 end
 
-function gm3ZeusCam:SendNPCsToCursor()
+function gm3ZeusCam:SendNPCsToCursor(traceOverride)
     if not SelectionHasNPCs() then
         notification.AddLegacy("Selection has no NPCs.", NOTIFY_HINT, 2)
         return
     end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("No target position under cursor.", NOTIFY_ERROR, 2)
         return
     end
     local selection = self:SendSelectionCommand("gm3ZeusCam_moveToClick", tr.HitPos)
     if selection then
-        self:TrackMoveOrders(tr.HitPos, selection)
+        self:TrackMoveOrders(tr.HitPos, selection, true)
         self:CreateRouteVisualFor(selection, {
             routeType = "move",
             nodes = {tr.HitPos},
@@ -1445,7 +1843,7 @@ function gm3ZeusCam:SendPlayersToCamera()
     end
     local selection = self:SendSelectionCommand("gm3ZeusCam_playersToCamera", CamPos)
     if selection then
-        self:TrackMoveOrders(CamPos, selection)
+        self:TrackMoveOrders(CamPos, selection, true)
         self:CreateRouteVisualFor(selection, {
             routeType = "move",
             nodes = {CamPos},
@@ -1455,19 +1853,19 @@ function gm3ZeusCam:SendPlayersToCamera()
     end
 end
 
-function gm3ZeusCam:SendPlayersToCursor()
+function gm3ZeusCam:SendPlayersToCursor(traceOverride)
     if not SelectionHasPlayers() then
         notification.AddLegacy("Selection has no players.", NOTIFY_HINT, 2)
         return
     end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("No target position under cursor.", NOTIFY_ERROR, 2)
         return
     end
     local selection = self:SendSelectionCommand("gm3ZeusCam_playersToCursor", tr.HitPos)
     if selection then
-        self:TrackMoveOrders(tr.HitPos, selection)
+        self:TrackMoveOrders(tr.HitPos, selection, true)
         self:CreateRouteVisualFor(selection, {
             routeType = "move",
             nodes = {tr.HitPos},
@@ -1477,12 +1875,180 @@ function gm3ZeusCam:SendPlayersToCursor()
     end
 end
 
+function gm3ZeusCam:SendPlayerBuff()
+    local targets = {}
+    for _, ent in ipairs(GetSelectionList()) do
+        if IsValid(ent) and ent:IsPlayer() and ent ~= LocalPlayer() then
+            table.insert(targets, ent)
+        end
+    end
+    if #targets == 0 then
+        notification.AddLegacy("Select players to inspire.", NOTIFY_HINT, 2)
+        return
+    end
+    lyx:NetSend("gm3ZeusCam_buffPlayers", function()
+        net.WriteUInt(#targets, 8)
+        for _, ply in ipairs(targets) do
+            net.WriteEntity(ply)
+        end
+    end)
+end
+
 function gm3ZeusCam:StopSelectedNPCs()
     if not SelectionHasNPCs() then
         notification.AddLegacy("Selection has no NPCs.", NOTIFY_HINT, 2)
         return
     end
     self:SendSelectionCommand("gm3ZeusCam_stopNPCs")
+end
+
+function gm3ZeusCam:OpenScreenMessagePrompt(targetPlayersOnly)
+    local targets = {}
+    if targetPlayersOnly then
+        for _, ent in ipairs(GetSelectionList()) do
+            if IsValid(ent) and ent:IsPlayer() and ent ~= LocalPlayer() then
+                table.insert(targets, ent)
+            end
+        end
+        if #targets == 0 then
+            notification.AddLegacy("Select players to target a message.", NOTIFY_HINT, 2)
+            return
+        end
+    end
+
+    local frame = vgui.Create("lyx.Frame2")
+    frame:SetTitle(targetPlayersOnly and "Message Selected Players" or "Broadcast Screen Message")
+    frame:SetSize(540, 400)
+    frame:Center()
+    frame:MakePopup()
+    frame:DockPadding(12, 40, 12, 12)
+
+    local textEntry = vgui.Create("DTextEntry", frame)
+    textEntry:Dock(TOP)
+    textEntry:DockMargin(0, 0, 0, 8)
+    textEntry:SetTall(70)
+    textEntry:SetMultiline(true)
+    textEntry:SetPlaceholderText("Enter message...")
+
+    local selectedColor = table.Copy(gm3_screenMessageColors[1].color)
+
+    local contentPanel = vgui.Create("DPanel", frame)
+    contentPanel:Dock(FILL)
+    contentPanel.Paint = nil
+
+    local colorPicker = vgui.Create("lyx.ColorPicker2", contentPanel)
+    colorPicker:Dock(LEFT)
+    colorPicker:SetWide(lyx.Scale(220))
+    colorPicker:DockMargin(0, 0, 10, 0)
+    colorPicker:SetColor(selectedColor)
+
+    local controlsPanel = vgui.Create("DPanel", contentPanel)
+    controlsPanel:Dock(FILL)
+    controlsPanel.Paint = nil
+
+    local colorPreview = vgui.Create("DPanel", controlsPanel)
+    colorPreview:Dock(TOP)
+    colorPreview:SetTall(lyx.Scale(60))
+    colorPreview:DockMargin(0, 0, 0, 5)
+    colorPreview.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, selectedColor)
+    end
+
+    local colorCombo = vgui.Create("DComboBox", controlsPanel)
+    colorCombo:Dock(TOP)
+    colorCombo:DockMargin(0, 0, 0, 5)
+    for _, entry in ipairs(gm3_screenMessageColors) do
+        colorCombo:AddChoice(entry.name, entry.color, entry == gm3_screenMessageColors[1])
+        if entry == gm3_screenMessageColors[1] then
+            colorCombo:SetValue(entry.name)
+        end
+    end
+    colorCombo.OnSelect = function(_, _, _, data)
+        if not data then return end
+        selectedColor.r = data.r
+        selectedColor.g = data.g
+        selectedColor.b = data.b
+        colorPicker:SetColor(selectedColor)
+        colorPreview:InvalidateLayout(true)
+    end
+
+    local alphaSlider = vgui.Create("DNumSlider", controlsPanel)
+    alphaSlider:Dock(TOP)
+    alphaSlider:DockMargin(0, 0, 0, 8)
+    alphaSlider:SetDecimals(0)
+    alphaSlider:SetMin(0)
+    alphaSlider:SetMax(255)
+    alphaSlider:SetValue(selectedColor.a or 255)
+    alphaSlider:SetText("Alpha")
+    alphaSlider.OnValueChanged = function(_, value)
+        selectedColor.a = math.Clamp(math.floor(value or 255), 0, 255)
+        colorPreview:InvalidateLayout(true)
+    end
+
+    local durationSlider = vgui.Create("DNumSlider", controlsPanel)
+    durationSlider:Dock(TOP)
+    durationSlider:DockMargin(0, 0, 0, 5)
+    durationSlider:SetDecimals(0)
+    durationSlider:SetMin(3)
+    durationSlider:SetMax(20)
+    durationSlider:SetValue(6)
+    durationSlider:SetText("Duration (seconds)")
+
+    local fadeSlider = vgui.Create("DNumSlider", controlsPanel)
+    fadeSlider:Dock(TOP)
+    fadeSlider:DockMargin(0, 0, 0, 5)
+    fadeSlider:SetDecimals(0)
+    fadeSlider:SetMin(50)
+    fadeSlider:SetMax(200)
+    fadeSlider:SetValue(90)
+    fadeSlider:SetText("Fade Speed")
+
+    colorPicker.OnChange = function(_, col)
+        selectedColor.r = col.r
+        selectedColor.g = col.g
+        selectedColor.b = col.b
+        colorPreview:InvalidateLayout(true)
+    end
+
+    local buttonBar = vgui.Create("DPanel", frame)
+    buttonBar:Dock(BOTTOM)
+    buttonBar:SetTall(45)
+    buttonBar.Paint = nil
+
+    local sendBtn = vgui.Create("lyx.TextButton2", buttonBar)
+    sendBtn:Dock(RIGHT)
+    sendBtn:SetText("Send")
+    sendBtn:SetWide(160)
+    sendBtn.DoClick = function()
+        local msg = string.Trim(textEntry:GetValue() or "")
+        if msg == "" then
+            notification.AddLegacy("Message cannot be empty.", NOTIFY_HINT, 2)
+            return
+        end
+        lyx:NetSend("gm3ZeusCam_screenMessage", function()
+            net.WriteBool(targetPlayersOnly and true or false)
+            if targetPlayersOnly then
+                net.WriteUInt(#targets, 8)
+                for _, ply in ipairs(targets) do
+                    net.WriteEntity(ply)
+                end
+            end
+            net.WriteString(msg)
+            net.WriteColor(selectedColor or gm3_screenMessageColors[1].color)
+            net.WriteFloat(durationSlider:GetValue())
+            net.WriteFloat(fadeSlider:GetValue())
+        end)
+
+        frame:Close()
+    end
+
+    local cancelBtn = vgui.Create("lyx.TextButton2", buttonBar)
+    cancelBtn:Dock(LEFT)
+    cancelBtn:SetWide(140)
+    cancelBtn:SetText("Cancel")
+    cancelBtn.DoClick = function()
+        frame:Close()
+    end
 end
 
 function gm3ZeusCam:TogglePropsFrozen(freeze)
@@ -1503,12 +2069,12 @@ function gm3ZeusCam:SendPropsToCamera()
     self:SendSelectionCommand("gm3ZeusCam_propsToCamera", CamPos)
 end
 
-function gm3ZeusCam:SendPropsToCursor()
+function gm3ZeusCam:SendPropsToCursor(traceOverride)
     if not SelectionHasProps() then
         notification.AddLegacy("Selection has no props.", NOTIFY_HINT, 2)
         return
     end
-    local tr = self:GetCursorTrace()
+    local tr = gm3_GetEffectiveTrace(traceOverride)
     if not tr.Hit then
         notification.AddLegacy("No target position under cursor.", NOTIFY_ERROR, 2)
         return
@@ -1552,8 +2118,8 @@ function gm3ZeusCam:CreateCamPanel(bool)
         
         -- draw a bottom bar
         local gm3CamPanelBottom = vgui.Create("DPanel", gm3CamPanel)
-        gm3CamPanelBottom:SetSize(ScrW(), lyx.Scale(60))
-        gm3CamPanelBottom:SetPos(0, ScrH() - lyx.Scale(60))
+        gm3CamPanelBottom:SetSize(ScrW(), lyx.Scale(90))
+        gm3CamPanelBottom:SetPos(0, ScrH() - lyx.Scale(90))
         gm3CamPanelBottom.Paint = function(self, w, h)
             surface.SetDrawColor( 37, 36, 36)
             surface.DrawRect( 0, 0, w, h )
@@ -1578,85 +2144,64 @@ function gm3ZeusCam:CreateCamPanel(bool)
         hint:SetFont("GM3_Cam_Subtitle")
         hint:SetTextColor(color_white)
         hint:SetText("Hold ALT to show cursor and select entities.")
-        hint:SizeToContents()
+        hint:SetWide(lyx.Scale(260))
 
-        local clearSel = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        clearSel:Dock(RIGHT)
-        clearSel:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        clearSel:SetText("Clear Selection")
-        clearSel:SetWide(lyx.Scale(150))
-        clearSel:SetBackgroundColor(Color(90, 90, 90))
-        clearSel.DoClick = function()
+        local buttonScroll = vgui.Create("DScrollPanel", gm3CamPanelBottom)
+        buttonScroll:Dock(FILL)
+        buttonScroll:DockMargin(lyx.Scale(10), lyx.Scale(5), lyx.Scale(10), lyx.Scale(5))
+        local buttonLayout = vgui.Create("DIconLayout", buttonScroll)
+        buttonLayout:Dock(FILL)
+        buttonLayout:SetSpaceX(lyx.Scale(6))
+        buttonLayout:SetSpaceY(lyx.Scale(6))
+
+        local function AddToolbarButton(text, color, width, callback)
+            local btn = buttonLayout:Add("lyx.TextButton2")
+            btn:SetSize(width or lyx.Scale(150), lyx.Scale(36))
+            btn:SetText(text)
+            btn:SetBackgroundColor(color)
+            btn.DoClick = callback
+            return btn
+        end
+
+        AddToolbarButton("Clear Selection", Color(90, 90, 90), nil, function()
             ClearSelection()
-        end
-
-        local removeSelected = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        removeSelected:Dock(RIGHT)
-        removeSelected:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        removeSelected:SetText("Remove Selected")
-        removeSelected:SetWide(lyx.Scale(150))
-        removeSelected:SetBackgroundColor(Color(255,0,0))
-        removeSelected.DoClick = function()
+        end)
+        AddToolbarButton("Remove Selected", Color(255, 0, 0), nil, function()
             gm3ZeusCam:RemoveSelectedEntities()
-        end
-
-        local moveToCamera = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        moveToCamera:Dock(RIGHT)
-        moveToCamera:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        moveToCamera:SetText("NPCs → Camera")
-        moveToCamera:SetWide(lyx.Scale(150))
-        moveToCamera:SetBackgroundColor(Color(139,36,139))
-        moveToCamera.DoClick = function()
-            gm3ZeusCam:SendNPCsToCamera()
-        end
-
-        local moveToClick = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        moveToClick:Dock(RIGHT)
-        moveToClick:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        moveToClick:SetText("NPCs → Cursor")
-        moveToClick:SetWide(lyx.Scale(150))
-        moveToClick:SetBackgroundColor(Color(139,36,139))
-        moveToClick.DoClick = function()
-            gm3ZeusCam:SendNPCsToCursor()
-        end
-
-        local waypointToggle = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        waypointToggle:Dock(RIGHT)
-        waypointToggle:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        waypointToggle:SetText("Waypoint Mode (OFF)")
-        waypointToggle:SetWide(lyx.Scale(150))
-        waypointToggle:SetBackgroundColor(Color(90, 90, 90))
-        waypointToggle.DoClick = function()
-            gm3ZeusCam:SetWaypointMode(not gm3_waypointMode)
-        end
-        self.WaypointModeButton = waypointToggle
-
-        local loopToggle = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        loopToggle:Dock(RIGHT)
-        loopToggle:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        loopToggle:SetText("Loop Patrol (ON)")
-        loopToggle:SetWide(lyx.Scale(150))
-        loopToggle:SetBackgroundColor(Color(50, 160, 80))
-        loopToggle.DoClick = function()
-            gm3ZeusCam:ToggleWaypointLoop()
-        end
-        self.WaypointLoopButton = loopToggle
-
-        local fireSupportBtn = vgui.Create("lyx.TextButton2", gm3CamPanelBottom)
-        fireSupportBtn:Dock(RIGHT)
-        fireSupportBtn:DockMargin(lyx.Scale(5), lyx.Scale(5), lyx.Scale(5), lyx.Scale(5))
-        fireSupportBtn:SetText("Fire Support")
-        fireSupportBtn:SetWide(lyx.Scale(150))
-        fireSupportBtn:SetBackgroundColor(Color(200, 120, 40))
-        fireSupportBtn.DoClick = function()
-            local quickMenu = DermaMenu()
-            for key, profile in pairs(gm3_fireSupportProfiles) do
-                quickMenu:AddOption(profile.label, function()
-                    gm3ZeusCam:CallFireSupport(key)
-                end)
+        end)
+        AddToolbarButton("Screen Message", Color(50, 120, 200), lyx.Scale(160), function()
+            gm3ZeusCam:OpenScreenMessagePrompt(false)
+        end)
+        AddToolbarButton("Camera Marks", Color(110, 90, 160), nil, function()
+            gm3ZeusCam:OpenBookmarkMenu()
+        end)
+        self.FollowButton = AddToolbarButton("Follow (OFF)", Color(90, 90, 90), nil, function()
+            if gm3_followTarget then
+                gm3ZeusCam:ClearFollowTarget()
+            else
+                gm3ZeusCam:StartFollowSelection()
             end
-            quickMenu:Open()
-        end
+        end)
+        AddToolbarButton("Rapid Redeploy", Color(230, 160, 60), lyx.Scale(170), function()
+            gm3ZeusCam:RedeploySelection(gm3_lastContextTrace)
+        end)
+        AddToolbarButton("Signal Marker", Color(200, 90, 140), nil, function()
+            gm3ZeusCam:PromptSignalMarker(gm3_lastContextTrace)
+        end)
+        self.WaypointModeButton = AddToolbarButton("Waypoint Mode (OFF)", Color(90, 90, 90), nil, function()
+            gm3ZeusCam:SetWaypointMode(not gm3_waypointMode)
+        end)
+        self.WaypointLoopButton = AddToolbarButton("Loop Patrol (ON)", Color(50, 160, 80), nil, function()
+            gm3ZeusCam:ToggleWaypointLoop()
+        end)
+        AddToolbarButton("Fire Support", Color(200, 120, 40), nil, function()
+            local quickTrace = gm3_lastContextTrace or gm3ZeusCam:GetCursorTrace()
+            if quickTrace and not quickTrace.Hit then
+                quickTrace = nil
+            end
+            gm3ZeusCam._pendingFireSupportTrace = quickTrace
+            gm3ZeusCam:OpenFireSupportPanel()
+        end)
 
         gm3ZeusCam:CreateSpawnToolbar(gm3CamPanel)
 
@@ -1668,6 +2213,12 @@ function gm3ZeusCam:CreateCamPanel(bool)
         if IsValid(gm3ZeusCam.SpawnToolbar) then
             gm3ZeusCam.SpawnToolbar:Remove()
             gm3ZeusCam.SpawnToolbar = nil
+        end
+        gm3ZeusCam.FireSupportSlider = nil
+        gm3ZeusCam.SpawnArtillerySlider = nil
+        if IsValid(gm3ZeusCam.FireSupportPanel) then
+            gm3ZeusCam.FireSupportPanel:Remove()
+            gm3ZeusCam.FireSupportPanel = nil
         end
     end
 end
@@ -1739,6 +2290,8 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                     cmd:SetViewAngles(CamOriginalAngle)
                     if not gm3_cursorMode then
                         CamAngle = (CamAngle + Angle(cmd:GetMouseY() * CamSensitivity, cmd:GetMouseX() * -CamSensitivity, 0))
+                        CamAngle.p = math.Clamp(CamAngle.p, -85, 85)
+                        CamAngle.r = 0
                     end
         
                     -- SPEED
@@ -1809,6 +2362,19 @@ function gm3ZeusCam:CreateCameraHooks(bool)
             local shouldCursor = gm3_spawnMode or gm3_waypointMode or input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT)
             gm3ZeusCam:SetCursorMode(shouldCursor)
             UpdateRouteVisualProgress()
+            if gm3_followTarget then
+                if not IsValid(gm3_followTarget) then
+                    gm3ZeusCam:ClearFollowTarget()
+                else
+                    local desired = gm3_followTarget:WorldSpaceCenter() + gm3_followOffset
+                    CamPos = LerpVector(FrameTime() * 4, CamPos, desired)
+                    if gm3_followYaw then
+                        local ang = Angle(CamAngle)
+                        ang.y = math.NormalizeAngle(gm3_followYaw)
+                        CamAngle = LerpAngle(FrameTime() * 2, CamAngle, ang)
+                    end
+                end
+            end
 
             if gm3_spawnMode and gm3_cursorMode then
                 if input.IsMouseDown(MOUSE_LEFT) and CurTime() > gm3_spawnNextClick then
@@ -1888,23 +2454,57 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                 if not IsValid(ent) or not istable(route.nodes) or #route.nodes == 0 then
                     gm3_routeVisuals[ent] = nil
                 else
+                    local totalNodes = #route.nodes
                     local routeColor = route.color or gm3_routeColors.default
-                    local prev = ent:WorldSpaceCenter()
                     local up = Vector(0, 0, 8)
-                    for idx, node in ipairs(route.nodes) do
-                        local alpha = idx < (route.currentIndex or 1) and 90 or 230
-                        local beamColor = Color(routeColor.r, routeColor.g, routeColor.b, alpha)
-                        DrawThickBeam(prev + up, node + up, (route.thickness or 4) + (idx == route.currentIndex and 1 or 0), beamColor)
-                        render.DrawWireframeSphere(node + Vector(0, 0, 4), 10 + idx * 1.5, 12, 12, beamColor, true)
-                        cam.Start3D2D(node + Vector(0, 0, 16), Angle(0, CamAngle.y - 90, 90), 0.08)
-                            draw.RoundedBox(4, -28, -12, 56, 24, Color(15, 15, 15, 220))
-                            draw.SimpleText("WP " .. idx, "GM3_Cam_Subtitle", 0, 0, Color(255, 255, 255, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                        cam.End3D2D()
-                        prev = node
+                    local entPos = ent:WorldSpaceCenter()
+                    local startIdx = math.Clamp(route.currentIndex or 1, 1, totalNodes)
+                    local segments = route.loop and totalNodes or (totalNodes - startIdx + 1)
+                    local prev = entPos
+                    local lastPos = entPos
+
+                    if segments > 0 then
+                        for seg = 0, segments - 1 do
+                            local idx = ((startIdx + seg - 1) % totalNodes) + 1
+                            local node = route.nodes[idx]
+                            if not isvector(node) then break end
+                            local alpha = seg == 0 and 240 or math.max(200 - seg * 35, 90)
+                            local beamColor = Color(routeColor.r, routeColor.g, routeColor.b, alpha)
+                            DrawThickBeam(prev + up, node + up, (route.thickness or 4) + (seg == 0 and 1 or 0), beamColor)
+                            render.DrawWireframeSphere(node + Vector(0, 0, 4), 12 + seg * 1.2, 12, 12, beamColor, true)
+                            cam.Start3D2D(node + Vector(0, 0, 16), Angle(0, CamAngle.y - 90, 90), 0.08)
+                                draw.RoundedBox(4, -28, -12, 56, 24, Color(15, 15, 15, 200))
+                                draw.SimpleText("WP " .. idx, "GM3_Cam_Subtitle", 0, 0, Color(255, 255, 255, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                            cam.End3D2D()
+                            prev = node
+                            lastPos = node
+                        end
+
+                        if route.loop and totalNodes > 1 then
+                            local loopColor = Color(routeColor.r, routeColor.g, routeColor.b, 110)
+                            DrawThickBeam(lastPos + up, entPos + up, route.thickness or 4, loopColor)
+                        end
                     end
-                    cam.Start3D2D(prev + Vector(0, 0, 30), Angle(0, CamAngle.y - 90, 90), 0.09)
+
+                    cam.Start3D2D((lastPos or entPos) + Vector(0, 0, 30), Angle(0, CamAngle.y - 90, 90), 0.09)
                         draw.RoundedBox(4, -80, -14, 160, 28, Color(10, 10, 10, 230))
                         draw.SimpleText(route.label or "Route", "GM3_Cam_Subtitle", 0, 0, routeColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    cam.End3D2D()
+                end
+            end
+
+            local now = CurTime()
+            for i = #gm3_signalMarkers, 1, -1 do
+                local marker = gm3_signalMarkers[i]
+                if not marker or marker.expire <= now then
+                    table.remove(gm3_signalMarkers, i)
+                else
+                    local col = marker.color or Color(255, 200, 120)
+                    local pos = marker.pos + Vector(0, 0, 4)
+                    render.DrawWireframeSphere(pos, 24, 12, 12, col, true)
+                    cam.Start3D2D(pos + Vector(0, 0, 42), Angle(0, CamAngle.y - 90, 90), 0.1)
+                        draw.RoundedBox(6, -80, -16, 160, 32, Color(10, 10, 10, 220))
+                        draw.SimpleText(marker.label or "Marker", "GM3_Cam_Subtitle", 0, 0, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     cam.End3D2D()
                 end
             end
@@ -2082,6 +2682,8 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                     reconY = reconY + lyx.Scale(18)
                 end
             end
+            DrawSelectionSummaryPanel(counts)
+            DrawSignalMarkersHUD()
         end)
 
         gm3ZeusCam:CreateCamPanel(true)
@@ -2091,6 +2693,7 @@ function gm3ZeusCam:CreateCameraHooks(bool)
         gm3ZeusCam:SetCursorMode(false)
         gm3ZeusCam:SetSpawnMode(false)
         gm3ZeusCam:SetWaypointMode(false)
+        gm3ZeusCam:ClearFollowTarget()
         gm3_hoveredEntity = nil
         gm3_selectionBox.active = false
         gm3_selectionBox.dragging = false
@@ -2140,3 +2743,93 @@ lyx:NetAdd("gm3ZeusCam_reconData", {
         surface.PlaySound("buttons/combine_button2.wav")
     end
 })
+
+lyx:NetAdd("gm3ZeusCam_signalMarker", {
+    func = function(len)
+        local pos = net.ReadVector()
+        local label = net.ReadString()
+        local r = net.ReadUInt(8)
+        local g = net.ReadUInt(8)
+        local b = net.ReadUInt(8)
+        local duration = net.ReadFloat() or 10
+        gm3_signalMarkers[#gm3_signalMarkers + 1] = {
+            pos = pos,
+            label = label,
+            color = Color(r, g, b),
+            expire = CurTime() + math.Clamp(duration, 2, 60)
+        }
+        surface.PlaySound("buttons/button1.wav")
+    end
+})
+
+lyx:NetAdd("gm3ZeusCam_artilleryPreview", {
+    func = function(len)
+        local pos = net.ReadVector()
+        local radius = net.ReadUInt(12) or 0
+        local delay = net.ReadFloat() or 0
+        local profile = net.ReadString() or "default"
+
+        gm3_artilleryPreviews[#gm3_artilleryPreviews + 1] = {
+            pos = pos,
+            radius = math.max(radius, 50),
+            impactTime = CurTime() + math.max(delay, 0),
+            duration = math.max(delay, 0.1),
+            profile = profile
+        }
+        surface.PlaySound("ambient/levels/prison/radio_random1.wav")
+    end
+})
+
+local function gm3_GetArtilleryColor(profile)
+    return gm3_artilleryColors[profile] or gm3_artilleryColors[string.lower(profile or "")] or gm3_artilleryColors.default
+end
+
+local function gm3_DrawArtilleryPreviews3D()
+    if #gm3_artilleryPreviews == 0 then return end
+    render.SetColorMaterial()
+    local now = CurTime()
+    local ply = LocalPlayer()
+    local yaw = IsValid(ply) and ply:EyeAngles().y or 0
+    for i = #gm3_artilleryPreviews, 1, -1 do
+        local preview = gm3_artilleryPreviews[i]
+        if not preview or now >= preview.impactTime then
+            table.remove(gm3_artilleryPreviews, i)
+        else
+            local remaining = math.max(preview.impactTime - now, 0)
+            local fraction = math.Clamp(remaining / preview.duration, 0, 1)
+            local color = gm3_GetArtilleryColor(preview.profile)
+            local alpha = math.Clamp(180 * fraction, 60, 200)
+            local pos = preview.pos + Vector(0, 0, 2)
+            render.DrawWireframeSphere(pos, preview.radius, 24, 24, Color(color.r, color.g, color.b, alpha), true)
+            render.DrawSphere(pos, preview.radius, 16, 16, Color(color.r, color.g, color.b, math.floor(alpha * 0.15)))
+            local textPos = pos + Vector(0, 0, preview.radius + 30)
+            local label = gm3_fireSupportProfiles[preview.profile] and gm3_fireSupportProfiles[preview.profile].label or "Artillery"
+            cam.Start3D2D(textPos, Angle(0, yaw - 90, 90), 0.15)
+                draw.RoundedBox(6, -140, -28, 280, 56, Color(10, 10, 10, 230))
+                draw.SimpleText(string.format("%s in %.1fs", label, remaining), "GM3_Cam_Subtitle", 0, 0, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            cam.End3D2D()
+        end
+    end
+end
+
+hook.Add("PostDrawTranslucentRenderables", "gm3ZeusCam_artilleryPreviewRender", gm3_DrawArtilleryPreviews3D)
+
+hook.Add("HUDPaint", "gm3ZeusCam_artilleryPreviewHUD", function()
+    if #gm3_artilleryPreviews == 0 then return end
+    local now = CurTime()
+    local y = ScrH() * 0.25
+    for i = #gm3_artilleryPreviews, 1, -1 do
+        local preview = gm3_artilleryPreviews[i]
+        if preview and preview.impactTime > now then
+            local remaining = math.max(preview.impactTime - now, 0)
+            local info = string.format("Incoming %s in %.1fs", gm3_fireSupportProfiles[preview.profile] and gm3_fireSupportProfiles[preview.profile].label or "Artillery", remaining)
+            draw.SimpleTextOutlined(info, "GM3_Cam_Title", ScrW() * 0.5, y, gm3_GetArtilleryColor(preview.profile), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP, 1, color_black)
+            y = y + 28
+        end
+    end
+end)
+cvars.AddChangeCallback("gm3Cam_artilleryDelay", function(_, _, new)
+    gm3_UpdateArtilleryDelay(new, true)
+end, "gm3ZeusCam_artillerySync")
+
+gm3_UpdateArtilleryDelay(CVCamArtilleryDelay:GetFloat(), true)
