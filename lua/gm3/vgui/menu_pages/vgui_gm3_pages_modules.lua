@@ -62,6 +62,19 @@ surface.CreateFont("GM3.Modules.Normal", {
     antialias = true
 })
 
+local function createCard(parent)
+    local card = vgui.Create("DPanel", parent)
+    card:Dock(TOP)
+    card:DockMargin(lyx.ScaleW(5), 0, lyx.ScaleW(5), lyx.Scale(8))
+    card:DockPadding(lyx.ScaleW(16), lyx.Scale(16), lyx.ScaleW(16), lyx.Scale(16))
+    card.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, Color(18, 18, 18, 235))
+        surface.SetDrawColor(255, 255, 255, 5)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+    end
+    return card
+end
+
 function PANEL:Init()
     self.Modules = {}
     self.FilteredModules = {}
@@ -82,14 +95,30 @@ function PANEL:Init()
     -- Category buttons
     self:CreateCategoryButtons()
 
+    local modulesCard = createCard(self.ScrollPanel)
+    local listHeader = vgui.Create("lyx.Label2", modulesCard)
+    listHeader:Dock(TOP)
+    listHeader:SetTall(lyx.Scale(26))
+    listHeader:SetFont("GM3.Modules.Title")
+    listHeader:SetText("Available Modules")
+
+    local listDesc = vgui.Create("lyx.Label2", modulesCard)
+    listDesc:Dock(TOP)
+    listDesc:SetTall(lyx.Scale(20))
+    listDesc:SetText("Configure parameters below, then run the action.")
+
     -- Module list container
-    self.ModuleContainer = vgui.Create("DListLayout", self.ScrollPanel)
+    self.ModuleContainer = vgui.Create("DListLayout", modulesCard)
     self.ModuleContainer:Dock(TOP)
-    self.ModuleContainer:DockMargin(0, 0, 0, lyx.Scale(20))
+    self.ModuleContainer:DockMargin(0, lyx.Scale(8), 0, 0)
     self.ModuleContainer:SetTall(0)
     self.ModuleContainer.PerformLayout = function(s)
         s:SizeToChildren(false, true)
     end
+
+    self.ModulesCard = modulesCard
+    modulesCard:InvalidateLayout(true)
+    modulesCard:SizeToChildren(false, true)
 
     -- Populate modules
     self:RefreshModules()
@@ -148,19 +177,38 @@ function PANEL:OnRemove()
 end
 
 function PANEL:CreateHeader()
-    -- Search container
-    local searchContainer = vgui.Create("DPanel", self.ScrollPanel)
-    searchContainer:Dock(TOP)
-    searchContainer:SetTall(lyx.Scale(50))
-    searchContainer:DockMargin(0, 0, 0, lyx.Scale(10))
-    searchContainer.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(68, 68, 68, 100))
+    local card = createCard(self.ScrollPanel)
+
+    local header = vgui.Create("lyx.Label2", card)
+    header:Dock(TOP)
+    header:SetTall(lyx.Scale(30))
+    header:SetFont("GM3.Modules.Title")
+    header:SetText("Module Control Center")
+
+    local desc = vgui.Create("lyx.Label2", card)
+    desc:Dock(TOP)
+    desc:SetTall(lyx.Scale(40))
+    desc:SetText("Search, reload, and manage every GM3 tool from one place. Updated in real time when you sync with the server.")
+    desc:SetWrap(true)
+
+    local row = vgui.Create("DPanel", card)
+    row:Dock(TOP)
+    row:SetTall(lyx.Scale(54))
+    row:DockMargin(0, lyx.Scale(8), 0, 0)
+    row.Paint = nil
+
+    self.SearchEntry = vgui.Create("lyx.TextEntry2", row)
+    self.SearchEntry:Dock(FILL)
+    self.SearchEntry:SetPlaceholderText("Search modules…")
+    self.SearchEntry.OnChange = function(s)
+        self.SearchText = s:GetValue()
+        self:FilterModules()
     end
 
-    self.ReloadButton = vgui.Create("lyx.TextButton2", searchContainer)
+    self.ReloadButton = vgui.Create("lyx.TextButton2", row)
     self.ReloadButton:Dock(RIGHT)
-    self.ReloadButton:SetWide(lyx.ScaleW(150))
-    self.ReloadButton:DockMargin(0, lyx.Scale(10), lyx.Scale(10), lyx.Scale(10))
+    self.ReloadButton:SetWide(lyx.ScaleW(170))
+    self.ReloadButton:DockMargin(lyx.ScaleW(10), 0, 0, 0)
     self.ReloadButton:SetText("Reload Modules")
     self.ReloadButton:SetFont("GM3.Modules.Category")
     self.ReloadButton:SetBackgroundColor(Color(70, 130, 180))
@@ -168,70 +216,61 @@ function PANEL:CreateHeader()
         self:RequestModuleReload()
     end
 
-    -- Search entry using LYX TextEntry2
-    self.SearchEntry = vgui.Create("lyx.TextEntry2", searchContainer)
-    self.SearchEntry:Dock(FILL)
-    self.SearchEntry:DockMargin(lyx.Scale(10), lyx.Scale(10), lyx.Scale(5), lyx.Scale(10))
-    self.SearchEntry:SetPlaceholderText("Search modules...")
-    -- lyx.TextEntry2 doesn't have SetFont or SetBackgroundColor, it uses its own styling
-    self.SearchEntry.OnChange = function(s)
-        self.SearchText = s:GetValue()
-        self:FilterModules()
-    end
-
-    -- Module count label
-    self.CountLabel = vgui.Create("DLabel", self.ScrollPanel)
+    self.CountLabel = vgui.Create("lyx.Label2", card)
     self.CountLabel:Dock(TOP)
-    self.CountLabel:DockMargin(lyx.Scale(5), 0, 0, lyx.Scale(10))
+    self.CountLabel:SetTall(lyx.Scale(18))
     self.CountLabel:SetFont("GM3.Modules.Normal")
-    self.CountLabel:SetTextColor(Color(255, 255, 255, 180))
+    self.CountLabel:SetTextColor(Color(200, 200, 200))
     self.CountLabel:SetText("Showing all modules")
+
+    card:InvalidateLayout(true)
+    card:SizeToChildren(false, true)
 end
 
 function PANEL:CreateCategoryButtons()
-    -- Category button container
-    local catContainer = vgui.Create("DPanel", self.ScrollPanel)
-    catContainer:Dock(TOP)
-    catContainer:SetTall(lyx.Scale(50))
-    catContainer:DockMargin(0, 0, 0, lyx.Scale(15))
-    catContainer.Paint = function() end
+    local card = createCard(self.ScrollPanel)
 
-    local x = 0
+    local header = vgui.Create("lyx.Label2", card)
+    header:Dock(TOP)
+    header:SetTall(lyx.Scale(24))
+    header:SetFont("GM3.Modules.Title")
+    header:SetText("Filter by Category")
 
-    -- All button
-    local allBtn = vgui.Create("lyx.TextButton2", catContainer)
-    allBtn:SetPos(x, 0)
-    allBtn:SetSize(lyx.ScaleW(120), lyx.Scale(40))
-    allBtn:SetText("All")
-    allBtn:SetFont("GM3.Modules.Category")
-    allBtn:SetBackgroundColor(Color(68, 68, 68))
-    allBtn.Category = "All"
-    allBtn.DoClick = function()
-        self:SelectCategory("All")
-    end
+    local layout = vgui.Create("DIconLayout", card)
+    layout:Dock(TOP)
+    layout:DockMargin(0, lyx.Scale(8), 0, 0)
+    layout:SetSpaceX(lyx.ScaleW(8))
+    layout:SetSpaceY(lyx.Scale(8))
 
-    x = x + lyx.ScaleW(125)
-    self.CategoryButtons = {allBtn}
+    self.CategoryButtons = {}
 
-    -- Category buttons
-    for catName, _ in pairs(MODULE_CATEGORIES) do
-        local btn = vgui.Create("lyx.TextButton2", catContainer)
-        btn:SetPos(x, 0)
-        btn:SetSize(lyx.ScaleW(120), lyx.Scale(40))
-        btn:SetText(catName)
+    local function createCategoryButton(name, color)
+        local btn = layout:Add("lyx.TextButton2")
+        btn:SetSize(lyx.ScaleW(150), lyx.Scale(40))
+        btn:SetText(name)
         btn:SetFont("GM3.Modules.Category")
-        btn:SetBackgroundColor(Color(50, 50, 50))
-        btn.Category = catName
+        btn:SetBackgroundColor(Color(45, 45, 45))
+        btn.Category = name
+        btn.CategoryColor = color
         btn.DoClick = function()
-            self:SelectCategory(catName)
+            self:SelectCategory(name)
         end
-
-        x = x + lyx.ScaleW(125)
         table.insert(self.CategoryButtons, btn)
     end
 
-    -- Update first button as active
-    self.CategoryButtons[1]:SetBackgroundColor(Color(100, 100, 100))
+    createCategoryButton("All", Color(90, 90, 90))
+    for catName, _ in pairs(MODULE_CATEGORIES) do
+        createCategoryButton(catName, CATEGORY_COLORS[catName] or Color(90, 90, 90))
+    end
+
+    self:SelectCategory("All")
+
+    local columns = 3
+    local rows = math.ceil(#self.CategoryButtons / columns)
+    layout:SetTall(math.max(rows, 1) * lyx.Scale(56) + math.max(rows - 1, 0) * lyx.Scale(8))
+
+    card:InvalidateLayout(true)
+    card:SizeToChildren(false, true)
 end
 
 function PANEL:SelectCategory(category)
@@ -240,7 +279,8 @@ function PANEL:SelectCategory(category)
     -- Update button colors
     for _, btn in ipairs(self.CategoryButtons) do
         if btn.Category == category then
-            btn:SetBackgroundColor(Color(100, 100, 100))
+            local c = btn.CategoryColor or Color(100, 100, 100)
+            btn:SetBackgroundColor(Color(c.r, c.g, c.b))
         else
             btn:SetBackgroundColor(Color(50, 50, 50))
         end
@@ -310,6 +350,10 @@ function PANEL:RefreshModules()
     end
 
     self.ModuleContainer:InvalidateLayout(true)
+    if IsValid(self.ModulesCard) then
+        self.ModulesCard:InvalidateLayout(true)
+        self.ModulesCard:SizeToChildren(false, true)
+    end
 end
 
 function PANEL:RequestModuleReload()

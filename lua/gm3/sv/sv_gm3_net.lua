@@ -7,6 +7,7 @@ lyx = lyx
 
 if SERVER then
     AddCSLuaFile("effects/eff_gm3_artilleryblast.lua")
+    cleanup.Register("gm3_waypoint")
 end
 
 --[[
@@ -141,6 +142,14 @@ do
                 return true
             end
         }
+    }
+
+    local GM3_WaypointIcons = {
+        flag = true,
+        target = true,
+        star = true,
+        alert = true,
+        gear = true
     }
 
     local GM3_SignalColors = {
@@ -1348,7 +1357,22 @@ do
                 owner = ply
             }
             table.insert(GM3_SupplyCrates, crate)
-            sound.Play("npc/combine_gunship/dropship_engine_distant_loop1.wav", crate:GetPos(), 80, 120)
+            crate.GM3SupplySound = CreateSound(crate, "npc/combine_gunship/dropship_engine_distant_loop1.wav")
+            if crate.GM3SupplySound then
+                crate.GM3SupplySound:PlayEx(0.7, 120)
+            end
+            timer.Simple(8, function()
+                if IsValid(crate) and crate.GM3SupplySound then
+                    crate.GM3SupplySound:FadeOut(2)
+                    crate.GM3SupplySound = nil
+                end
+            end)
+            crate:CallOnRemove("GM3_StopSupplySound", function(ent)
+                if ent.GM3SupplySound then
+                    ent.GM3SupplySound:Stop()
+                    ent.GM3SupplySound = nil
+                end
+            end)
             ply:ChatPrint("Supply crate inbound.")
             lyx.Logger:Log("Zeus cam supply drop (" .. dropType .. ") by " .. ply:Nick())
         end,
@@ -1687,6 +1711,85 @@ do
         end,
         auth = function(ply) return gm3:SecurityCheck(ply) end,
         rateLimit = 4
+    })
+
+    lyx:NetAdd("gm3ZeusCam_createWaypoint", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized waypoint attempt by " .. ply:Nick(), 2)
+                return
+            end
+            local pos = net.ReadVector()
+            local title = string.sub(string.Trim(net.ReadString() or "Waypoint"), 1, 40)
+            local subtitle = string.sub(string.Trim(net.ReadString() or ""), 1, 60)
+            local r = net.ReadUInt(8) or 255
+            local g = net.ReadUInt(8) or 200
+            local b = net.ReadUInt(8) or 120
+            local icon = string.Trim(net.ReadString() or "flag")
+            if not isvector(pos) then return end
+            if not GM3_WaypointIcons[string.lower(icon)] then
+                icon = "flag"
+            end
+            local waypoint = ents.Create("gm3_waypoint")
+            if not IsValid(waypoint) then return end
+            waypoint:SetPos(pos + Vector(0, 0, 8))
+            waypoint:SetWaypointTitle(title)
+            waypoint:SetWaypointSubtitle(subtitle)
+            waypoint:SetWaypointColor(Vector(r, g, b))
+            waypoint:SetWaypointIcon(string.lower(icon))
+            waypoint.Owner = ply
+            waypoint:Spawn()
+            ply:AddCleanup("gm3_waypoint", waypoint)
+            undo.Create("gm3_waypoint")
+                undo.AddEntity(waypoint)
+                undo.SetPlayer(ply)
+            undo.Finish()
+            lyx.Logger:Log(string.format("Waypoint '%s' created by %s", title, ply:Nick()))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 4
+    })
+
+    lyx:NetAdd("gm3ZeusCam_removeWaypoint", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized waypoint removal by " .. ply:Nick(), 2)
+                return
+            end
+            local ent = net.ReadEntity()
+            if not IsValid(ent) or ent:GetClass() ~= "gm3_waypoint" then return end
+            ent:Remove()
+            lyx.Logger:Log("Waypoint removed by " .. ply:Nick())
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 5
+    })
+
+    lyx:NetAdd("gm3ZeusCam_updateWaypoint", {
+        func = function(ply, len)
+            if not gm3:SecurityCheck(ply) then
+                lyx.Logger:Log("Unauthorized waypoint update by " .. ply:Nick(), 2)
+                return
+            end
+            local ent = net.ReadEntity()
+            if not IsValid(ent) or ent:GetClass() ~= "gm3_waypoint" then return end
+            local title = string.sub(string.Trim(net.ReadString() or "Waypoint"), 1, 40)
+            local subtitle = string.sub(string.Trim(net.ReadString() or ""), 1, 60)
+            local r = net.ReadUInt(8) or 255
+            local g = net.ReadUInt(8) or 200
+            local b = net.ReadUInt(8) or 120
+            local icon = string.Trim(net.ReadString() or "flag")
+            if not GM3_WaypointIcons[string.lower(icon)] then
+                icon = "flag"
+            end
+            ent:SetWaypointTitle(title)
+            ent:SetWaypointSubtitle(subtitle)
+            ent:SetWaypointColor(Vector(r, g, b))
+            ent:SetWaypointIcon(string.lower(icon))
+            lyx.Logger:Log(string.format("Waypoint '%s' updated by %s", title, ply:Nick()))
+        end,
+        auth = function(ply) return gm3:SecurityCheck(ply) end,
+        rateLimit = 6
     })
 
     hook.Add("Think", "GM3_ZeusPatrolThink", function()

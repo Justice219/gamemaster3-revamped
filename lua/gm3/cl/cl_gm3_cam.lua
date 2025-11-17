@@ -58,8 +58,15 @@ local gm3_waypointLoop = true
 local gm3_nextWaypointClick = 0
 local gm3_waypointPreviewPos = nil
 local gm3_waypointClearHeld = false
+local gm3_waypointSelection = nil
 local gm3_reconPings = gm3_reconPings or {}
 local gm3_signalMarkers = gm3_signalMarkers or {}
+local gm3_lastWaypointConfig = gm3_lastWaypointConfig or {
+    title = "Waypoint",
+    subtitle = "",
+    color = Color(255, 200, 120),
+    icon = "flag"
+}
 local gm3_lastReconRequest = 0
 local gm3_routeVisuals = gm3_routeVisuals or {}
 local vector_origin = vector_origin or Vector(0, 0, 0)
@@ -195,6 +202,21 @@ local gm3_signalPalette = {
     {name = "Violet", color = Color(190, 140, 255)}
 }
 
+local gm3_waypointIcons = {
+    {id = "flag", label = "Flag", icon = "icon16/flag.png"},
+    {id = "target", label = "Target", icon = "icon16/cross.png"},
+    {id = "star", label = "Star", icon = "icon16/star.png"},
+    {id = "alert", label = "Alert", icon = "icon16/exclamation.png"},
+    {id = "gear", label = "Objective", icon = "icon16/cog.png"}
+}
+
+local gm3_waypointIconLookup = {}
+for _, info in ipairs(gm3_waypointIcons) do
+    gm3_waypointIconLookup[info.id] = info
+end
+
+local gm3_waypointIconMaterials = {}
+
 local gm3_artilleryColors = {
     precision = Color(255, 255, 200),
     barrage = Color(255, 170, 50),
@@ -294,6 +316,7 @@ local function IsSelectableEntity(ent)
     if ent:IsNPC() or ent:IsNextBot() then return true end
     local class = ent:GetClass()
     if class == "prop_physics" or class == "prop_dynamic" then return true end
+    if class == "gm3_waypoint" then return true end
     return false
 end
 
@@ -501,6 +524,332 @@ function gm3ZeusCam:PromptSignalMarker(traceOverride)
             end
         end
     end, nil, "Continue", "Cancel")
+end
+
+function gm3ZeusCam:SendWaypointCreate(config, traceOverride)
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before placing a waypoint.", NOTIFY_ERROR, 2)
+        return
+    end
+    local color = config.color or Color(255, 200, 120)
+    local title = string.sub(string.Trim(config.title or "Waypoint"), 1, 40)
+    local subtitle = string.sub(string.Trim(config.subtitle or ""), 1, 60)
+    local icon = gm3_waypointIconLookup[config.icon] and config.icon or "flag"
+    lyx:NetSend("gm3ZeusCam_createWaypoint", function()
+        net.WriteVector(tr.HitPos + Vector(0, 0, 4))
+        net.WriteString(title)
+        net.WriteString(subtitle)
+        net.WriteUInt(color.r, 8)
+        net.WriteUInt(color.g, 8)
+        net.WriteUInt(color.b, 8)
+        net.WriteString(icon)
+    end)
+end
+
+function gm3ZeusCam:RemoveWaypoint(ent)
+    if not IsValid(ent) or ent:GetClass() ~= "gm3_waypoint" then return end
+    lyx:NetSend("gm3ZeusCam_removeWaypoint", function()
+        net.WriteEntity(ent)
+    end)
+end
+
+function gm3ZeusCam:PromptWaypointPlacement(traceOverride)
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before placing a waypoint.", NOTIFY_ERROR, 2)
+        return
+    end
+    local cfg = table.Copy(gm3_lastWaypointConfig)
+    local frame = vgui.Create("lyx.Frame2")
+    frame:SetTitle("Place Waypoint")
+    frame:SetSize(lyx.ScaleW(420), lyx.Scale(340))
+    frame:Center()
+    frame:MakePopup()
+    frame:DockPadding(lyx.Scale(16), lyx.Scale(40), lyx.Scale(16), lyx.Scale(16))
+
+    local nameEntry = vgui.Create("DTextEntry", frame)
+    nameEntry:Dock(TOP)
+    nameEntry:SetTall(lyx.Scale(28))
+    nameEntry:SetText(cfg.title or "")
+    nameEntry:SetPlaceholderText("Title")
+
+    local subtitleEntry = vgui.Create("DTextEntry", frame)
+    subtitleEntry:Dock(TOP)
+    subtitleEntry:DockMargin(0, lyx.Scale(6), 0, 0)
+    subtitleEntry:SetTall(lyx.Scale(28))
+    subtitleEntry:SetText(cfg.subtitle or "")
+    subtitleEntry:SetPlaceholderText("Subtitle")
+
+    local iconCombo = vgui.Create("DComboBox", frame)
+    iconCombo:Dock(TOP)
+    iconCombo:DockMargin(0, lyx.Scale(6), 0, 0)
+    iconCombo:SetTall(lyx.Scale(26))
+    local selectedIcon = cfg.icon or "flag"
+    for _, data in ipairs(gm3_waypointIcons) do
+        iconCombo:AddChoice(data.label, data.id, data.id == selectedIcon)
+    end
+    iconCombo.OnSelect = function(_, _, _, data)
+        selectedIcon = data or selectedIcon
+    end
+
+    local mixer = vgui.Create("DColorMixer", frame)
+    mixer:Dock(FILL)
+    mixer:DockMargin(0, lyx.Scale(10), 0, lyx.Scale(10))
+    mixer:SetPalette(true)
+    mixer:SetAlphaBar(false)
+    mixer:SetColor(cfg.color or Color(255, 200, 120))
+
+    local confirm = vgui.Create("lyx.TextButton2", frame)
+    confirm:Dock(BOTTOM)
+    confirm:SetText("Place Waypoint")
+    confirm:SetTall(lyx.Scale(32))
+    confirm:SetBackgroundColor(Color(70, 140, 220))
+    confirm.DoClick = function()
+        local config = {
+            title = nameEntry:GetValue(),
+            subtitle = subtitleEntry:GetValue(),
+            color = mixer:GetColor(),
+            icon = selectedIcon
+        }
+        gm3_lastWaypointConfig = table.Copy(config)
+        self:SendWaypointCreate(config, tr)
+        frame:Close()
+    end
+end
+
+function gm3ZeusCam:SendWaypointUpdate(ent, config)
+    if not IsValid(ent) or ent:GetClass() ~= "gm3_waypoint" then return end
+    local color = config.color or Color(255, 200, 120)
+    local title = string.sub(string.Trim(config.title or "Waypoint"), 1, 40)
+    local subtitle = string.sub(string.Trim(config.subtitle or ""), 1, 60)
+    local icon = gm3_waypointIconLookup[config.icon] and config.icon or "flag"
+    lyx:NetSend("gm3ZeusCam_updateWaypoint", function()
+        net.WriteEntity(ent)
+        net.WriteString(title)
+        net.WriteString(subtitle)
+        net.WriteUInt(color.r, 8)
+        net.WriteUInt(color.g, 8)
+        net.WriteUInt(color.b, 8)
+        net.WriteString(icon)
+    end)
+end
+
+function gm3ZeusCam:RefreshWaypointListPanel()
+    if not IsValid(self.WaypointList) then return end
+    self.WaypointList:Clear()
+    local entries = ents.FindByClass("gm3_waypoint")
+    table.sort(entries, function(a, b)
+        return (a:GetWaypointTitle() or "") < (b:GetWaypointTitle() or "")
+    end)
+    local camPos = CamPos
+    for _, ent in ipairs(entries) do
+        if not IsValid(ent) then continue end
+        local item = self.WaypointList:Add("DPanel")
+        item:SetTall(lyx.Scale(70))
+        item:Dock(TOP)
+        item:DockMargin(0, 0, 0, lyx.Scale(6))
+        item.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(20, 20, 20, 220))
+            local colorVec = ent.GetWaypointColor and ent:GetWaypointColor() or Vector(255, 200, 120)
+            surface.SetDrawColor(colorVec.x or 255, colorVec.y or 200, colorVec.z or 120, 200)
+            surface.DrawRect(0, 0, lyx.Scale(6), h)
+        end
+        local info = vgui.Create("DPanel", item)
+        info:Dock(FILL)
+        info:DockMargin(lyx.Scale(10), lyx.Scale(6), lyx.Scale(6), lyx.Scale(6))
+        info.Paint = nil
+
+        local titleLabel = vgui.Create("DLabel", info)
+        titleLabel:Dock(TOP)
+        titleLabel:SetTall(lyx.Scale(20))
+        titleLabel:SetFont("GM3_Cam_Subtitle")
+        titleLabel:SetTextColor(color_white)
+        titleLabel:SetContentAlignment(5)
+
+        local subLabel = vgui.Create("DLabel", info)
+        subLabel:Dock(TOP)
+        subLabel:SetTall(lyx.Scale(20))
+        subLabel:SetFont("GM3_Cam_Subtitle")
+        subLabel:SetTextColor(Color(200, 200, 200))
+        subLabel:SetContentAlignment(5)
+
+        local function updateLabels()
+            local dist = camPos:Distance(ent:GetPos())
+            local title = ent:GetWaypointTitle() ~= "" and ent:GetWaypointTitle() or "Waypoint"
+            local subtitle = ent:GetWaypointSubtitle() or ""
+            titleLabel:SetText(string.format("%s (%dm)", title, math.floor(dist / 16)))
+            subLabel:SetText(subtitle)
+        end
+        updateLabels()
+
+        local btnRow = vgui.Create("DPanel", item)
+        btnRow:Dock(RIGHT)
+        btnRow:SetWide(lyx.Scale(150))
+        btnRow.Paint = nil
+
+        local focusBtn = vgui.Create("lyx.TextButton2", btnRow)
+        focusBtn:Dock(TOP)
+        focusBtn:DockMargin(0, 0, 0, lyx.Scale(4))
+        focusBtn:SetText("Focus")
+        focusBtn.DoClick = function()
+            CamPos = ent:GetPos() + Vector(0, 0, 300)
+            CamAngle = Angle(60, CamAngle.y, 0)
+        end
+
+        local editBtn = vgui.Create("lyx.TextButton2", btnRow)
+        editBtn:Dock(TOP)
+        editBtn:DockMargin(0, lyx.Scale(4), 0, lyx.Scale(4))
+        editBtn:SetText("Edit")
+        editBtn:SetBackgroundColor(Color(80, 140, 220))
+        editBtn.DoClick = function()
+            self:OpenWaypointManager()
+            timer.Simple(0, function()
+                self:PopulateWaypointEditor(ent)
+            end)
+        end
+
+        local removeBtn = vgui.Create("lyx.TextButton2", btnRow)
+        removeBtn:Dock(TOP)
+        removeBtn:SetText("Remove")
+        removeBtn:SetBackgroundColor(Color(200, 80, 80))
+        removeBtn.DoClick = function()
+            self:RemoveWaypoint(ent)
+            timer.Simple(0.3, function()
+                self:RefreshWaypointListPanel()
+            end)
+        end
+    end
+end
+
+function gm3ZeusCam:OpenWaypointManager()
+    if IsValid(self.WaypointPanel) then
+        self.WaypointPanel:MakePopup()
+        self:RefreshWaypointListPanel()
+        return
+    end
+
+    local frame = vgui.Create("lyx.Frame2")
+    frame:SetTitle("Waypoint Manager")
+    frame:SetSize(lyx.ScaleW(650), lyx.Scale(430))
+    frame:Center()
+    frame:MakePopup()
+    frame:DockPadding(lyx.Scale(12), lyx.Scale(40), lyx.Scale(12), lyx.Scale(12))
+    frame.OnRemove = function()
+        if self.WaypointPanel == frame then
+            self.WaypointPanel = nil
+            self.WaypointList = nil
+        end
+    end
+    self.WaypointPanel = frame
+
+    local listPanel = vgui.Create("DScrollPanel", frame)
+    listPanel:Dock(LEFT)
+    listPanel:SetWide(lyx.ScaleW(300))
+    listPanel:DockMargin(0, 0, lyx.Scale(8), 0)
+    self.WaypointList = vgui.Create("DListLayout", listPanel)
+    self.WaypointList:Dock(FILL)
+
+    local configPanel = vgui.Create("DPanel", frame)
+    configPanel:Dock(FILL)
+    configPanel:DockPadding(lyx.Scale(12), lyx.Scale(12), lyx.Scale(12), lyx.Scale(12))
+    configPanel.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(15, 15, 15, 230))
+    end
+
+    local nameEntry = vgui.Create("DTextEntry", configPanel)
+    nameEntry:Dock(TOP)
+    nameEntry:SetTall(lyx.Scale(28))
+    nameEntry:SetPlaceholderText("Waypoint Title")
+
+    local subtitleEntry = vgui.Create("DTextEntry", configPanel)
+    subtitleEntry:Dock(TOP)
+    subtitleEntry:DockMargin(0, lyx.Scale(6), 0, 0)
+    subtitleEntry:SetTall(lyx.Scale(28))
+    subtitleEntry:SetPlaceholderText("Subtitle / Objective")
+
+    local colorMixer = vgui.Create("DColorMixer", configPanel)
+    colorMixer:Dock(TOP)
+    colorMixer:SetTall(lyx.Scale(140))
+    colorMixer:DockMargin(0, lyx.Scale(6), 0, 0)
+    colorMixer:SetPalette(true)
+    colorMixer:SetAlphaBar(false)
+    colorMixer:SetColor(Color(255, 200, 120))
+
+    local iconCombo = vgui.Create("DComboBox", configPanel)
+    iconCombo:Dock(TOP)
+    iconCombo:DockMargin(0, lyx.Scale(6), 0, 0)
+    iconCombo:SetTall(lyx.Scale(26))
+    local selectedIcon = gm3_waypointIcons[1].id
+    for _, data in ipairs(gm3_waypointIcons) do
+        iconCombo:AddChoice(data.label, data.id, data.id == selectedIcon)
+    end
+    iconCombo.OnSelect = function(_, _, _, data)
+        selectedIcon = data or selectedIcon
+        if self.WaypointEditor then
+            self.WaypointEditor.selectedIcon = selectedIcon
+        end
+    end
+
+    local createBtn = vgui.Create("lyx.TextButton2", configPanel)
+    createBtn:Dock(TOP)
+    createBtn:DockMargin(0, lyx.Scale(8), 0, 0)
+    createBtn:SetText("Place Waypoint at Cursor")
+    createBtn:SetBackgroundColor(Color(60, 160, 120))
+    createBtn.DoClick = function()
+        self:SendWaypointCreate({
+            title = nameEntry:GetValue(),
+            subtitle = subtitleEntry:GetValue(),
+            color = colorMixer:GetColor(),
+            icon = selectedIcon
+        }, gm3_lastContextTrace)
+        timer.Simple(0.3, function()
+            self:RefreshWaypointListPanel()
+        end)
+    end
+
+    local refreshBtn = vgui.Create("lyx.TextButton2", configPanel)
+    refreshBtn:Dock(TOP)
+    refreshBtn:DockMargin(0, lyx.Scale(6), 0, 0)
+    refreshBtn:SetText("Refresh List")
+    refreshBtn.DoClick = function()
+        self:RefreshWaypointListPanel()
+    end
+
+    local updateBtn = vgui.Create("lyx.TextButton2", configPanel)
+    updateBtn:Dock(TOP)
+    updateBtn:DockMargin(0, lyx.Scale(6), 0, 0)
+    updateBtn:SetText("Update Selected")
+    updateBtn:SetEnabled(false)
+    updateBtn:SetBackgroundColor(Color(70, 140, 220))
+    updateBtn.DoClick = function()
+        local editor = self.WaypointEditor
+        if not editor or not IsValid(editor.selectedWaypoint) then return end
+        self:SendWaypointUpdate(editor.selectedWaypoint, {
+            title = editor.nameEntry:GetValue(),
+            subtitle = editor.subtitleEntry:GetValue(),
+            color = editor.colorMixer:GetColor(),
+            icon = editor.selectedIcon
+        })
+        timer.Simple(0.3, function()
+            self:RefreshWaypointListPanel()
+        end)
+    end
+
+    self.WaypointEditor.updateBtn = updateBtn
+    self.WaypointEditor.selectedWaypoint = nil
+
+    self:RefreshWaypointListPanel()
+    self.WaypointEditor = self.WaypointEditor or {}
+    self.WaypointEditor.nameEntry = nameEntry
+    self.WaypointEditor.subtitleEntry = subtitleEntry
+    self.WaypointEditor.colorMixer = colorMixer
+    self.WaypointEditor.iconCombo = iconCombo
+    self.WaypointEditor.selectedIcon = selectedIcon
+    self.WaypointEditor.updateBtn = updateBtn
+    self.WaypointEditor.selectedWaypoint = nil
+    updateBtn:SetEnabled(false)
+    updateBtn:SetText("Update Selected")
 end
 
 local function SelectionHasProps()
@@ -742,6 +1091,28 @@ local function GetSelectionColor(ent)
     end
 end
 
+local function GetWaypointIconData(id)
+    return gm3_waypointIconLookup[id] or gm3_waypointIconLookup.flag
+end
+
+local function GetWaypointIconMaterial(id)
+    local data = GetWaypointIconData(id)
+    if not gm3_waypointIconMaterials[data.id] then
+        gm3_waypointIconMaterials[data.id] = Material(data.icon or "icon16/flag.png", "smooth")
+    end
+    return gm3_waypointIconMaterials[data.id]
+end
+
+local function FilterNPCSelection(list)
+    local result = {}
+    for _, ent in ipairs(list or {}) do
+        if IsValid(ent) and (ent:IsNPC() or ent:IsNextBot()) then
+            table.insert(result, ent)
+        end
+    end
+    return result
+end
+
 local function DrawSelectionSummaryPanel(counts)
     if gm3_selectionCount == 0 then return end
     local panelW = lyx.ScaleW(240)
@@ -906,6 +1277,10 @@ local function UpdateRouteVisualProgress()
     end
 end
 
+hook.Add("Think", "gm3ZeusRouteVisualThink", function()
+    UpdateRouteVisualProgress()
+end)
+
 function gm3ZeusCam:CreateRouteVisualFor(selection, baseData, perEntityNodes)
     baseData = baseData or {}
     for _, ent in ipairs(selection or {}) do
@@ -931,17 +1306,19 @@ end
 
 function gm3ZeusCam:SetWaypointMode(state)
     state = state and true or false
-    if state and not SelectionHasNPCs() then
-        notification.AddLegacy("Select NPCs before entering waypoint mode.", NOTIFY_HINT, 2)
-        return
-    end
     if state then
+        local npcSelection = FilterNPCSelection(GetSelectionList())
+        if #npcSelection == 0 then
+            notification.AddLegacy("Select NPCs before entering waypoint mode.", NOTIFY_HINT, 2)
+            return
+        end
+        gm3_waypointSelection = npcSelection
         gm3_spawnMode = false
         self:SetSpawnMode(false)
         ClearWaypoints()
         gm3_waypointPreviewPos = nil
-    end
-    if not state then
+    else
+        gm3_waypointSelection = nil
         ClearWaypoints()
         gm3_waypointPreviewPos = nil
     end
@@ -980,18 +1357,24 @@ end
 
 function gm3ZeusCam:CommitWaypoints()
     if not gm3_waypointMode then return end
-    if not SelectionHasNPCs() then
-        notification.AddLegacy("Waypoint mode requires NPC selection.", NOTIFY_HINT, 2)
-        self:SetWaypointMode(false)
-        return
-    end
     if #gm3_waypoints == 0 then
         notification.AddLegacy("Add waypoints with LMB before finalizing.", NOTIFY_HINT, 2)
         return
     end
 
     local finalTarget = gm3_waypoints[#gm3_waypoints]
-    local selection = self:SendSelectionCommand("gm3ZeusCam_setPatrolRoute", nil, function()
+    local selection = FilterNPCSelection(gm3_waypointSelection or GetSelectionList())
+    if #selection == 0 then
+        notification.AddLegacy("Waypoint mode lost its NPC selection.", NOTIFY_HINT, 2)
+        self:SetWaypointMode(false)
+        return
+    end
+
+    lyx:NetSend("gm3ZeusCam_setPatrolRoute", function()
+        net.WriteUInt(#selection, 12)
+        for _, ent in ipairs(selection) do
+            net.WriteEntity(ent)
+        end
         net.WriteUInt(#gm3_waypoints, 6)
         for _, waypoint in ipairs(gm3_waypoints) do
             net.WriteVector(waypoint)
@@ -999,18 +1382,19 @@ function gm3ZeusCam:CommitWaypoints()
         net.WriteBool(gm3_waypointLoop)
     end)
 
-    if selection then
-        self:TrackMoveOrders(finalTarget, selection, true)
-        notification.AddLegacy("Issued patrol route to " .. tostring(#selection) .. " units.", NOTIFY_GENERIC, 3)
-        self:CreateRouteVisualFor(selection, {
-            routeType = "patrol",
-            nodes = table.Copy(gm3_waypoints),
-            loop = gm3_waypointLoop,
-            label = gm3_waypointLoop and "Patrol Loop" or "Patrol",
-            thickness = 5,
-            persistent = true,
-            threshold = 9000
-        })
+    self:TrackMoveOrders(finalTarget, selection, true)
+    notification.AddLegacy("Issued patrol route to " .. tostring(#selection) .. " units.", NOTIFY_GENERIC, 3)
+    self:CreateRouteVisualFor(selection, {
+        routeType = "patrol",
+        nodes = table.Copy(gm3_waypoints),
+        loop = gm3_waypointLoop,
+        label = gm3_waypointLoop and "Patrol Loop" or "Patrol",
+        thickness = 5,
+        persistent = true,
+        threshold = 9000
+    })
+    for _, ent in ipairs(selection) do
+        RemoveFromSelection(ent)
     end
 
     self:SetWaypointMode(false)
@@ -1025,7 +1409,8 @@ function gm3ZeusCam:CancelWaypoints(silent)
 end
 
 function gm3ZeusCam:HandleWaypointInput()
-    if not SelectionHasNPCs() then
+    gm3_waypointSelection = FilterNPCSelection(gm3_waypointSelection)
+    if not gm3_waypointSelection or #gm3_waypointSelection == 0 then
         self:SetWaypointMode(false)
         notification.AddLegacy("Waypoint mode cancelled: no NPCs selected.", NOTIFY_HINT, 2)
         return
@@ -1694,15 +2079,41 @@ function gm3ZeusCam:OpenContextMenu()
         gm3_lastContextTrace = nil
     end
 
+    menu:AddOption("Place Waypoint", function()
+        self:PromptWaypointPlacement(gm3_lastContextTrace)
+    end):SetIcon("icon16/map.png")
+
     if gm3_selectionCount > 0 then
         local hasNPCs = SelectionHasNPCs()
         local hasPlayers = SelectionHasPlayers()
         local hasProps = SelectionHasProps()
+        local hasWaypoints = false
+        for ent, _ in pairs(gm3_selectedEntities) do
+            if IsValid(ent) and ent:GetClass() == "gm3_waypoint" then
+                hasWaypoints = true
+                break
+            end
+        end
 
         local removeOption = menu:AddOption("Remove Selected", function()
             self:RemoveSelectedEntities()
         end)
         removeOption:SetIcon("icon16/delete.png")
+
+        menu:AddOption("Camera Bookmarks", function()
+            self:OpenBookmarkMenu()
+        end):SetIcon("icon16/flag_blue.png")
+
+        if hasWaypoints then
+            menu:AddSpacer()
+            menu:AddOption("Remove Waypoint(s)", function()
+                for ent, _ in pairs(gm3_selectedEntities) do
+                    if IsValid(ent) and ent:GetClass() == "gm3_waypoint" then
+                        self:RemoveWaypoint(ent)
+                    end
+                end
+            end):SetIcon("icon16/flag_delete.png")
+        end
 
         if hasNPCs then
             menu:AddSpacer()
@@ -2290,9 +2701,6 @@ function gm3ZeusCam:CreateCamPanel(bool)
         AddToolbarButton("Screen Message", Color(50, 120, 200), lyx.Scale(160), function()
             gm3ZeusCam:OpenScreenMessagePrompt(false)
         end, "icon16/comment.png")
-        AddToolbarButton("Camera Marks", Color(110, 90, 160), nil, function()
-            gm3ZeusCam:OpenBookmarkMenu()
-        end, "icon16/flag_blue.png")
         self.FollowButton = AddToolbarButton("Follow (OFF)", Color(90, 90, 90), nil, function()
             if gm3_followTarget then
                 gm3ZeusCam:ClearFollowTarget()
@@ -2306,6 +2714,9 @@ function gm3ZeusCam:CreateCamPanel(bool)
         AddToolbarButton("Signal Marker", Color(200, 90, 140), nil, function()
             gm3ZeusCam:PromptSignalMarker(gm3_lastContextTrace)
         end, "icon16/flag_red.png")
+        AddToolbarButton("Waypoints", Color(90, 120, 200), nil, function()
+            gm3ZeusCam:OpenWaypointManager()
+        end, "icon16/map.png")
         self.WaypointModeButton = AddToolbarButton("Waypoint Mode (OFF)", Color(90, 90, 90), nil, function()
             gm3ZeusCam:SetWaypointMode(not gm3_waypointMode)
         end, "icon16/shape_square.png")
@@ -2479,7 +2890,6 @@ function gm3ZeusCam:CreateCameraHooks(bool)
 
             local shouldCursor = gm3_spawnMode or gm3_waypointMode or input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT)
             gm3ZeusCam:SetCursorMode(shouldCursor)
-            UpdateRouteVisualProgress()
             if gm3_followTarget then
                 if not IsValid(gm3_followTarget) then
                     gm3ZeusCam:ClearFollowTarget()
@@ -2619,8 +3029,12 @@ function gm3ZeusCam:CreateCameraHooks(bool)
                 else
                     local col = marker.color or Color(255, 200, 120)
                     local pos = marker.pos + Vector(0, 0, 4)
-                    render.DrawWireframeSphere(pos, 24, 12, 12, col, true)
-                    cam.Start3D2D(pos + Vector(0, 0, 42), Angle(0, CamAngle.y - 90, 90), 0.1)
+                    local radius = 110
+                    render.DrawWireframeSphere(pos, radius, 16, 16, col, true)
+                    render.SetColorMaterial()
+                    render.DrawSphere(pos, radius * 0.6, 16, 16, Color(col.r, col.g, col.b, 25))
+                    render.DrawLine(pos, pos + Vector(0, 0, 140), col)
+                    cam.Start3D2D(pos + Vector(0, 0, 150), Angle(0, CamAngle.y - 90, 90), 0.1)
                         draw.RoundedBox(6, -80, -16, 160, 32, Color(10, 10, 10, 220))
                         draw.SimpleText(marker.label or "Marker", "GM3_Cam_Subtitle", 0, 0, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     cam.End3D2D()
@@ -2817,7 +3231,6 @@ function gm3ZeusCam:CreateCameraHooks(bool)
         gm3_selectionBox.dragging = false
         ClearSelection()
         table.Empty(gm3_moveOrders)
-        ClearRouteVisuals()
     end
 end
 
@@ -2946,8 +3359,54 @@ hook.Add("HUDPaint", "gm3ZeusCam_artilleryPreviewHUD", function()
         end
     end
 end)
+
+hook.Add("HUDPaint", "gm3WaypointGlobalHUD", function()
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+    local waypoints = ents.FindByClass("gm3_waypoint")
+    if #waypoints == 0 then return end
+    local w, h = ScrW(), ScrH()
+    for _, ent in ipairs(waypoints) do
+        if not IsValid(ent) then continue end
+        local screen = ent:GetPos():ToScreen()
+        local colorVec = ent:GetWaypointColor()
+        local labelColor = Color(colorVec.x or 255, colorVec.y or 200, colorVec.z or 120)
+        local dist = ply:GetPos():Distance(ent:GetPos())
+        local scale = math.Clamp(dist / 600, 0.9, 1.8)
+        local title = ent:GetWaypointTitle() ~= "" and ent:GetWaypointTitle() or "Waypoint"
+        local subtitle = ent:GetWaypointSubtitle()
+        local iconMat = GetWaypointIconMaterial(ent:GetWaypointIcon())
+        local iconSize = math.floor(24 * scale)
+        local x = math.Clamp(screen.x, iconSize, w - iconSize)
+        local y = math.Clamp(screen.y, iconSize, h - iconSize)
+        surface.SetMaterial(iconMat)
+        surface.SetDrawColor(labelColor)
+        surface.DrawTexturedRect(x - iconSize * 0.5, y - iconSize - lyx.Scale(2), iconSize, iconSize)
+        draw.SimpleTextOutlined(string.format("%s (%dm)", title, math.floor(dist / 16)), "GM3_Cam_Subtitle", x, y, labelColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP, 1, color_black)
+        if subtitle ~= "" then
+            draw.SimpleTextOutlined(subtitle, "GM3_Cam_Subtitle", x, y + lyx.Scale(16), Color(220, 220, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP, 1, color_black)
+        end
+    end
+end)
 cvars.AddChangeCallback("gm3Cam_artilleryDelay", function(_, _, new)
     gm3_UpdateArtilleryDelay(new, true)
 end, "gm3ZeusCam_artillerySync")
 
 gm3_UpdateArtilleryDelay(CVCamArtilleryDelay:GetFloat(), true)
+function gm3ZeusCam:PopulateWaypointEditor(ent)
+    if not IsValid(ent) or not self.WaypointEditor then return end
+    local editor = self.WaypointEditor
+    editor.selectedWaypoint = ent
+    local title = ent:GetWaypointTitle() or ""
+    local subtitle = ent:GetWaypointSubtitle() or ""
+    editor.nameEntry:SetValue(title)
+    editor.subtitleEntry:SetValue(subtitle)
+    local vec = ent:GetWaypointColor()
+    editor.colorMixer:SetColor(Color(vec.x or 255, vec.y or 200, vec.z or 120))
+    editor.selectedIcon = ent:GetWaypointIcon() or "flag"
+    editor.iconCombo:SetValue(GetWaypointIconData(editor.selectedIcon).label)
+    if IsValid(editor.updateBtn) then
+        editor.updateBtn:SetEnabled(true)
+        editor.updateBtn:SetText("Update '" .. (title ~= "" and title or "Waypoint") .. "'")
+    end
+end
