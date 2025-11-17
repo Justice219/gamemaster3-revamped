@@ -1,5 +1,42 @@
 # GameMaster 3 - Advanced Gamemaster Tools for Garry's Mod
 
+## Steam Workshop Description
+✨ **Welcome to GameMaster 3: Revamped** — the complete creative toolkit for immersive RP events. GM3 brings a Lyx 2.0 UI overhaul, smarter rank controls, and dozens of cinematic + utility tools tailored for CWRP, HaloRP, DarkRP, and MRP storytellers.
+
+### Why GM3?
+- 🎬 Tools crafted specifically for narrative control (cutscenes, puppet master, territory control, blackouts, etc.)
+- 🛠️ Built-in rank management and chat-command builder right inside the UI
+- 🖥️ Modern Lyx 2.0 styling with responsive cards, color pickers, and streamlined navigation
+
+### Getting Started
+1. 🚀 Install GM3 alongside the Lyx framework, then launch your server/client.
+2. 💬 Type `!gm3` (or use your Lyx bind) to open the panel.
+3. 🔐 As a **Super Admin**, visit **Ranks** to grant access (only Super Admins can add/remove ranks for now).
+4. 🧰 Use **Commands** to build RP chat macros, then explore **Modules** to run tools.
+
+### Tool Highlights
+- ⚡ **Disable Chat / Disable Lights / Kill Entities / Toggle Flashlights / Lock Doors**
+- 🎥 **Cutscene** (Chromium x64), 📨 **Screen Message**, ⏱️ **Screen Timer**, 🌋 **Screen Shake**
+- ❤️ **Lives**, 🌀 **Levitate**, 👁️ **Player ESP**, 🧹 **Clear Lag**, 🛰️ **OPSAT**, 🌑 **Black Screen**
+- 🧠 **Reality Glitch**, 🕴️ **Puppet Master**, 🛰️ **Territory Control**, 🚀 **Jetpack**, 📏 **Model Size**, and more
+
+### Chat Commands
+Looking for immersive comms? The Commands tab lets you design colored headers, speaker prefixes, and permissions—with a live preview—no Lua editing required.
+
+### Feature Snapshot
+- 🌓 Sleek Lyx 2.0 UI with dark cards and responsive panels
+- 🛡️ In-game rank editor (Super Admin gated for safety)
+- 🌐 Works across common RP gamemodes and remains open-source
+- 🧠 Backend/networking cleanup for reliability
+
+### What's New in Revamped
+- 🔄 Full Lyx 2.0 integration
+- 🗯️ Custom chat-command builder
+- 🎚️ Streamlined in-game rank restriction workflow
+- 🧽 Visual polish + backend fixes throughout the toolkit
+
+_Use this block as your Steam Workshop description so the listing matches the revamped experience. The sections below dive into deeper technical documentation._
+
 A comprehensive suite of creative tools designed specifically for gamemasters running events in SWRP, MRP, and DarkRP servers. GM3 provides powerful, non-generic tools that go beyond standard admin functionality to enhance roleplay and event management.
 
 ## 🎮 Overview
@@ -77,108 +114,3 @@ Create surreal and disorienting effects:
 - **Disable Chat** - Manage chat commands
 - **Disable Lights** - Control map lighting
 - **Low Gravity** - Modify server physics
-
-### Event Tools
-- **Lives System** - Set respawn limits for events
-- **Cutscene** - Play YouTube videos as cutscenes (Chromium required)
-- **Confetti Pop** - Celebration effects
-- **Screen Shake** - Environmental effects
-- **Molest** - Apply random chaotic effects
-
-## 🚀 Installation
-
-1. Ensure you have the Lyx framework installed
-2. Place the `gamemaster3-revamped` folder in your `garrysmod/addons/` directory
-3. The addon will automatically load with Lyx
-
-## 📋 Requirements
-
-- Garry's Mod Server
-- Lyx Framework (required dependency)
-- Chromium x64 branch (for video cutscenes)
-
-## 🎯 Usage
-
-### For Gamemasters
-1. Open the GM3 menu (default bind configured in Lyx)
-2. Navigate to the Modules tab
-3. Select a tool from the categorized list
-4. Configure parameters using the intuitive UI
-5. Click "Run" to execute the tool
-
-### For Developers
-Tools follow the GM3Module structure:
-```lua
-local tool = GM3Module.new(
-    "Tool Name",
-    "Description",
-    "Author",
-    {
-        ["Parameter Name"] = {
-            type = "string|number|boolean|player|color",
-            def = defaultValue
-        }
-    },
-    function(ply, args)
-        -- Tool logic here
-    end,
-    "Category"
-)
-gm3:addTool(tool)
-```
-
-## 🔧 Configuration
-
-Tools can be customized by editing files in `lua/gm3/tools/`. Each tool is self-contained and follows a consistent structure for easy modification.
-
-## 🌐 Network Communication
-
-GM3 uses Lyx's optimized networking system with registered network strings for each tool. This ensures minimal bandwidth usage and maximum performance during events.
-
-## 🎨 Customization
-
-### Adding New Tools
-1. Create a new file in `lua/gm3/tools/` following the naming convention `sh_gm3_tool_[name].lua`
-2. Use the GM3Module structure
-3. Register network strings as needed
-4. The tool will automatically appear in the menu
-
-### Custom Categories
-Tools can be assigned to custom categories by specifying the category parameter in `GM3Module.new()`
-
-## 📊 Performance
-
-- Efficient timer-based systems with automatic cleanup
-- Optimized network messages
-- Minimal server impact
-- Smart resource management
-
-## 🤝 Contributing
-
-Contributions are welcome! When adding new tools:
-1. Follow the existing code structure
-2. Include proper comments and documentation
-3. Test thoroughly in different scenarios
-4. Ensure compatibility with common gamemodes
-
-## 📝 License
-
-This addon is provided as-is for use on Garry's Mod servers running the Lyx framework.
-
-## 🆘 Support
-
-For issues, feature requests, or questions:
-- Check the GM3_CLAUDE_DOCUMENTATION.md for detailed technical information
-- Review existing tools for implementation examples
-- Ensure Lyx framework is properly installed and configured
-
-## 🎖️ Credits
-
-- **GM3 Core System** - Original framework and module system
-- **Tool Authors** - Individual credits preserved in each tool file
-- **Lyx Framework** - Underlying infrastructure
-- **Community** - Feedback and testing
-
----
-
-*GameMaster 3 - Empowering gamemasters with creative control*

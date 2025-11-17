@@ -250,7 +250,7 @@ end
 
 surface.CreateFont("GM3_Cam_Subtitle", {
     font = "Roboto",
-    size = 20,
+    size = 14,
     weight = 500,
     antialias = true,
     shadow = false
@@ -386,6 +386,121 @@ local function SelectionHasNPCs()
         end
     end
     return false
+end
+
+function gm3ZeusCam:OpenBookmarkMenu()
+    local menu = DermaMenu()
+    for slot = 1, 4 do
+        local has = gm3_cameraBookmarks[slot] ~= nil
+        menu:AddOption(has and ("Jump to Slot " .. slot) or ("Slot " .. slot .. " (empty)"), function()
+            self:LoadCameraBookmark(slot)
+        end):SetIcon(has and "icon16/eye.png" or "icon16/eye_disabled.png")
+        menu:AddOption("Save Slot " .. slot, function()
+            self:SaveCameraBookmark(slot)
+        end):SetIcon("icon16/disk.png")
+        if slot < 4 then
+            menu:AddSpacer()
+        end
+    end
+    local x, y = gui.MousePos()
+    menu:Open()
+    if x ~= 0 and y ~= 0 then
+        menu:SetPos(x, y)
+    end
+end
+
+function gm3ZeusCam:ClearFollowTarget()
+    gm3_followTarget = nil
+    gm3_followYaw = nil
+    if IsValid(self.FollowButton) then
+        self.FollowButton:SetText("Follow (OFF)")
+        self.FollowButton:SetBackgroundColor(Color(90, 90, 90))
+    end
+end
+
+function gm3ZeusCam:StartFollowSelection()
+    local selection = GetSelectionList()
+    local target = selection[1]
+    if not IsValid(target) then
+        notification.AddLegacy("Select an entity to follow.", NOTIFY_HINT, 2)
+        return
+    end
+    gm3_followTarget = target
+    gm3_followOffset = CamPos - target:WorldSpaceCenter()
+    gm3_followYaw = CamAngle.y
+    if IsValid(self.FollowButton) then
+        self.FollowButton:SetText("Follow (" .. (target:IsPlayer() and target:Nick() or target:GetClass()) .. ")")
+        self.FollowButton:SetBackgroundColor(Color(70, 140, 220))
+    end
+end
+
+function gm3ZeusCam:RedeploySelection(traceOverride)
+    if not SelectionHasNPCs() then
+        notification.AddLegacy("Select NPCs to redeploy.", NOTIFY_HINT, 2)
+        return
+    end
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before redeploying.", NOTIFY_ERROR, 2)
+        return
+    end
+    local selection = self:SendSelectionCommand("gm3ZeusCam_redeployNPCs", tr.HitPos)
+    if selection then
+        notification.AddLegacy("Redeploying " .. tostring(#selection) .. " units.", NOTIFY_GENERIC, 3)
+    end
+end
+
+function gm3ZeusCam:SendSignalMarker(label, colorIndex, traceOverride)
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain before placing a marker.", NOTIFY_ERROR, 2)
+        return
+    end
+    local text = string.Trim(label or "")
+    if text == "" then
+        text = "Signal"
+    end
+    local idx = math.Clamp(tonumber(colorIndex) or 1, 1, #gm3_signalPalette)
+    local duration = 15
+    lyx:NetSend("gm3ZeusCam_dropMarker", function()
+        net.WriteVector(tr.HitPos + Vector(0, 0, 4))
+        net.WriteString(string.sub(text, 1, 32))
+        net.WriteUInt(idx - 1, 3)
+        net.WriteFloat(duration)
+    end)
+    notification.AddLegacy("Signal marker placed.", NOTIFY_GENERIC, 2)
+end
+
+function gm3ZeusCam:PromptSignalMarker(traceOverride)
+    local tr = gm3_GetEffectiveTrace(traceOverride)
+    if not tr.Hit then
+        notification.AddLegacy("Aim at terrain to place a marker.", NOTIFY_ERROR, 2)
+        return
+    end
+    Derma_StringRequest("Signal Marker", "Enter a label for this marker", "Objective", function(text)
+        local frame = vgui.Create("lyx.Frame2")
+        frame:SetTitle("Select Marker Color")
+        frame:SetSize(lyx.ScaleW(320), lyx.Scale(200))
+        frame:Center()
+        frame:MakePopup()
+        frame:DockPadding(lyx.Scale(10), lyx.Scale(40), lyx.Scale(10), lyx.Scale(10))
+
+        local layout = vgui.Create("DIconLayout", frame)
+        layout:Dock(FILL)
+        layout:SetSpaceX(lyx.Scale(8))
+        layout:SetSpaceY(lyx.Scale(8))
+
+        for idx, entry in ipairs(gm3_signalPalette) do
+            local btn = layout:Add("lyx.TextButton2")
+            btn:SetSize(lyx.Scale(140), lyx.Scale(36))
+            btn:SetBackgroundColor(entry.color)
+            btn:SetText(entry.name)
+            btn.DoClick = function()
+                self:SendSignalMarker(text, idx, tr)
+                frame:Close()
+            end
+        end
+    end, nil, "Continue", "Cancel")
 end
 
 local function SelectionHasProps()
@@ -2154,46 +2269,49 @@ function gm3ZeusCam:CreateCamPanel(bool)
         buttonLayout:SetSpaceX(lyx.Scale(6))
         buttonLayout:SetSpaceY(lyx.Scale(6))
 
-        local function AddToolbarButton(text, color, width, callback)
+        local function AddToolbarButton(text, color, width, callback, icon)
             local btn = buttonLayout:Add("lyx.TextButton2")
             btn:SetSize(width or lyx.Scale(150), lyx.Scale(36))
             btn:SetText(text)
             btn:SetBackgroundColor(color)
+            if icon and btn.SetIcon then
+                btn:SetIcon(icon)
+            end
             btn.DoClick = callback
             return btn
         end
 
         AddToolbarButton("Clear Selection", Color(90, 90, 90), nil, function()
             ClearSelection()
-        end)
+        end, "icon16/cancel.png")
         AddToolbarButton("Remove Selected", Color(255, 0, 0), nil, function()
             gm3ZeusCam:RemoveSelectedEntities()
-        end)
+        end, "icon16/delete.png")
         AddToolbarButton("Screen Message", Color(50, 120, 200), lyx.Scale(160), function()
             gm3ZeusCam:OpenScreenMessagePrompt(false)
-        end)
+        end, "icon16/comment.png")
         AddToolbarButton("Camera Marks", Color(110, 90, 160), nil, function()
             gm3ZeusCam:OpenBookmarkMenu()
-        end)
+        end, "icon16/flag_blue.png")
         self.FollowButton = AddToolbarButton("Follow (OFF)", Color(90, 90, 90), nil, function()
             if gm3_followTarget then
                 gm3ZeusCam:ClearFollowTarget()
             else
                 gm3ZeusCam:StartFollowSelection()
             end
-        end)
+        end, "icon16/picture_link.png")
         AddToolbarButton("Rapid Redeploy", Color(230, 160, 60), lyx.Scale(170), function()
             gm3ZeusCam:RedeploySelection(gm3_lastContextTrace)
-        end)
+        end, "icon16/arrow_refresh.png")
         AddToolbarButton("Signal Marker", Color(200, 90, 140), nil, function()
             gm3ZeusCam:PromptSignalMarker(gm3_lastContextTrace)
-        end)
+        end, "icon16/flag_red.png")
         self.WaypointModeButton = AddToolbarButton("Waypoint Mode (OFF)", Color(90, 90, 90), nil, function()
             gm3ZeusCam:SetWaypointMode(not gm3_waypointMode)
-        end)
+        end, "icon16/shape_square.png")
         self.WaypointLoopButton = AddToolbarButton("Loop Patrol (ON)", Color(50, 160, 80), nil, function()
             gm3ZeusCam:ToggleWaypointLoop()
-        end)
+        end, "icon16/arrow_rotate_clockwise.png")
         AddToolbarButton("Fire Support", Color(200, 120, 40), nil, function()
             local quickTrace = gm3_lastContextTrace or gm3ZeusCam:GetCursorTrace()
             if quickTrace and not quickTrace.Hit then
@@ -2201,7 +2319,7 @@ function gm3ZeusCam:CreateCamPanel(bool)
             end
             gm3ZeusCam._pendingFireSupportTrace = quickTrace
             gm3ZeusCam:OpenFireSupportPanel()
-        end)
+        end, "icon16/bomb.png")
 
         gm3ZeusCam:CreateSpawnToolbar(gm3CamPanel)
 

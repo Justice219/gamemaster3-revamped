@@ -1,59 +1,72 @@
 local PANEL = {}
 
 function PANEL:Init()
-
+    self:DockPadding(lyx.ScaleW(16), lyx.Scale(14), lyx.ScaleW(16), lyx.Scale(14))
 end
 
 lyx.RegisterFont("GM3.Components.Rank", "Open Sans SemiBold", 20)
+lyx.RegisterFont("GM3.Components.RankSmall", "Open Sans", 16)
 
-function PANEL:SetRank(name, panel) 
-    self.Label = vgui.Create("lyx.Label2", self)
-    self.Label:SetText(name)
-    self.Label:Dock(LEFT)
-    self.Label:DockMargin(lyx.ScaleW(15), lyx.Scale(14), lyx.ScaleW(0), lyx.Scale(0))
-    self.Label:SetFont("GM3.Components.Rank")
-    self.Label:SetWide(lyx.Scale(100))
+function PANEL:SetRank(name, panel)
+    self.rankName = name
 
-    // panel label
-    self.PanelAccess = vgui.Create("lyx.Label2", self)
-    self.PanelAccess:SetText("Has panel access?")
-    self.PanelAccess:Dock(TOP)
-    self.PanelAccess:DockMargin(lyx.ScaleW(15), lyx.Scale(14), lyx.ScaleW(0), lyx.Scale(0))
-    self.PanelAccess:SetTall(25)
-    self.PanelAccess:SetFont("GM3.Components.Rank")
+    local Header = vgui.Create("DPanel", self)
+    Header:Dock(TOP)
+    Header:SetTall(lyx.Scale(32))
+    Header.Paint = function() end
 
-    local checkbox = vgui.Create("lyx.Checkbox2", self)
-    checkbox:Dock(TOP)
-    checkbox:DockMargin(lyx.ScaleW(10), lyx.Scale(10), lyx.ScaleW(10), lyx.Scale(10))
-    checkbox:SetTall(lyx.Scale(15))
-    checkbox:SetToggle(panel)
+    local Label = vgui.Create("lyx.Label2", Header)
+    Label:Dock(LEFT)
+    Label:SetFont("GM3.Components.Rank")
+    Label:SetText(name)
+    Label:SetWide(lyx.ScaleW(200))
 
-    self.RemoveRank = vgui.Create("lyx.TextButton2", self)
-    self.RemoveRank:SetText("Remove")
-    self.RemoveRank:SetFont("GM3.Components.Rank")
-    self.RemoveRank:Dock(TOP)
-    self.RemoveRank:DockMargin(lyx.ScaleW(0), lyx.Scale(12), lyx.ScaleW(15), lyx.Scale(12))
-    self.RemoveRank.DoClick = function()
-         surface.PlaySound("buttons/button10.wav")
+    local PanelDesc = vgui.Create("lyx.Label2", Header)
+    PanelDesc:Dock(FILL)
+    PanelDesc:SetFont("GM3.Components.RankSmall")
+    PanelDesc:SetText("Panel Access")
 
-         net.Start("gm3:rank:remove")
-            net.WriteString(name)   
+    self.Checkbox = vgui.Create("lyx.Checkbox2", self)
+    self.Checkbox:Dock(TOP)
+    self.Checkbox:SetTall(lyx.Scale(18))
+    self.Checkbox:SetText(panel and "Has access" or "No access")
+    self.Checkbox:SetToggle(panel)
+    self.Checkbox.OnToggled = function(_, val)
+        self.Checkbox:SetText(val and "Has access" or "No access")
+    end
+
+    local ButtonRow = vgui.Create("DPanel", self)
+    ButtonRow:Dock(TOP)
+    ButtonRow:SetTall(lyx.Scale(40))
+    ButtonRow:DockMargin(0, lyx.Scale(8), 0, 0)
+    ButtonRow.Paint = function() end
+
+    local RemoveRank = vgui.Create("lyx.TextButton2", ButtonRow)
+    RemoveRank:Dock(LEFT)
+    RemoveRank:SetWide(lyx.ScaleW(140))
+    RemoveRank:SetText("Remove Rank")
+    RemoveRank:SetBackgroundColor(Color(111, 28, 28))
+    RemoveRank.DoClick = function()
+        surface.PlaySound("buttons/button10.wav")
+
+        net.Start("gm3:rank:remove")
+            net.WriteString(name)
         net.SendToServer()
 
         self:Remove()
     end
 
-    self.SaveRank = vgui.Create("lyx.TextButton2", self)
-    self.SaveRank:SetText("Save")
-    self.SaveRank:SetFont("GM3.Components.Rank")
-    self.SaveRank:Dock(TOP)
-    self.SaveRank:DockMargin(lyx.ScaleW(0), lyx.Scale(12), lyx.ScaleW(15), lyx.Scale(12))
-    self.SaveRank.DoClick = function()
-         surface.PlaySound("buttons/button10.wav")
+    local SaveRank = vgui.Create("lyx.TextButton2", ButtonRow)
+    SaveRank:Dock(RIGHT)
+    SaveRank:SetWide(lyx.ScaleW(140))
+    SaveRank:SetText("Save Changes")
+    SaveRank:SetBackgroundColor(Color(63, 61, 61))
+    SaveRank.DoClick = function()
+        surface.PlaySound("buttons/button10.wav")
 
-         net.Start("gm3:rank:save")
+        net.Start("gm3:rank:save")
             net.WriteString(name)
-            net.WriteBool(checkbox:GetToggle())
+            net.WriteBool(self.Checkbox:GetToggle())
         net.SendToServer()
 
         gm3:SyncReopenMenu("Ranks")
@@ -61,7 +74,9 @@ function PANEL:SetRank(name, panel)
 end
 
 function PANEL:Paint(w, h)
-    draw.RoundedBox(4, 0, 0, w, h, lyx.Colors.Foreground)
+    draw.RoundedBox(6, 0, 0, w, h, Color(14, 11, 11, 160))
+    surface.SetDrawColor(255, 255, 255, 4)
+    surface.DrawOutlinedRect(0, 0, w, h)
 end
 
 vgui.Register("GM3.Components.Rank", PANEL)

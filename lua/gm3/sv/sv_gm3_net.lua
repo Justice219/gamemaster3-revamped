@@ -5,6 +5,10 @@ gm3.commands = gm3.commands or {}
 gm3.settings = gm3.settings or {}
 lyx = lyx
 
+if SERVER then
+    AddCSLuaFile("effects/eff_gm3_artilleryblast.lua")
+end
+
 --[[
 --! GM3 Network Message Handler
 --! Uses LYX's secure networking with authentication and rate limiting
